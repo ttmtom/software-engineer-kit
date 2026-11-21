@@ -1,9 +1,9 @@
 ---
-name: Kit Implementer
+name: SWE Implementer
 description: Implement planned changes cleanly, matching codebase conventions and active domain/language engineering profiles.
 ---
 
-# Kit Implementer
+# SWE Implementer
 
 Execute the approved plan with minimal, idiomatic, high-signal changes.
 

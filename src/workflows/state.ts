@@ -65,6 +65,7 @@ export interface WorkflowState {
   readonly pendingGate?: PendingGate;
   readonly approvedGates: readonly string[];
   readonly goal: string;
+  readonly reviewTarget?: string;
   readonly profiles: readonly string[];
   readonly tasks: readonly PlanTask[];
   readonly acceptanceCriteria: readonly string[];
@@ -234,10 +235,13 @@ export function renderWorkflowContext(input: {
   const mappedSkill = options.stageSkills[state.stage];
 
   const lines: string[] = [
-    `<kit-workflow pipeline="${state.pipeline}" stage="${state.stage}" status="${state.status}" skill="${mappedSkill}">`,
+    `<swe-workflow pipeline="${state.pipeline}" stage="${state.stage}" status="${state.status}" skill="${mappedSkill}">`,
     `Goal: ${state.goal || "(unspecified)"}`,
     `Pipeline Order: ${stages.join(" -> ")}`,
     `Next Stage: ${nextStage ?? "(final stage)"}`,
+    ...(state.stage === "review" && state.reviewTarget
+      ? [`Review Target: ${state.reviewTarget}`]
+      : []),
     `Active Profiles: ${state.profiles.length > 0 ? state.profiles.join(", ") : "none"}`,
   ];
 
@@ -246,8 +250,8 @@ export function renderWorkflowContext(input: {
       `CONFIRMATION GATE ACTIVE: gate="${state.pendingGate.gate}", targetStage="${state.pendingGate.targetStage}", userResponded=${state.pendingGate.userResponded}`,
       `Gate Reason: ${state.pendingGate.summary}`,
       state.pendingGate.userResponded
-        ? `User responded since gate prompt. If they approved, call \`kit_workflow_approve\` to unlock "${state.pendingGate.targetStage}". If they requested changes, update the draft/plan first.`
-        : `STOP: Do NOT start "${state.pendingGate.targetStage}" or edit files yet. Present the summary/plan to the user and wait for explicit approval (or /kit-approve).`,
+        ? `User responded since gate prompt. If they approved, call \`swe_workflow_approve\` to unlock "${state.pendingGate.targetStage}". If they requested changes, update the draft/plan first.`
+        : `STOP: Do NOT start "${state.pendingGate.targetStage}" or edit files yet. Present the summary/plan to the user and wait for explicit approval.`,
     );
   } else {
     lines.push(`Instruction: Follow skill "${mappedSkill}" for the current "${state.stage}" stage.`);
@@ -318,6 +322,6 @@ export function renderWorkflowContext(input: {
     }
   }
 
-  lines.push("</kit-workflow>");
+  lines.push("</swe-workflow>");
   return lines.join("\n");
 }

@@ -1,9 +1,14 @@
+import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { parseImplementArgs, parseOrchestrateArgs } from "../src/commands/index.ts";
+import {
+  inspectGitReviewTarget,
+  parsePipelineArgs,
+  parseReviewerArgs,
+} from "../src/commands/index.ts";
 import { checkToolAllowedDuringGate, extractTouchedFilePaths } from "../src/hooks/index.ts";
 import { parseOptions } from "../src/options.ts";
 import { loadBundledSkills, parseSkillMarkdown } from "../src/skills/loader.ts";
@@ -14,7 +19,7 @@ import {
   normalizeProfiles,
   renderStageOverlays,
 } from "../src/skills/profiles.ts";
-import { BUILTIN_PIPELINES, getNextStage } from "../src/workflows/pipelines.ts";
+import { getNextStage } from "../src/workflows/pipelines.ts";
 import {
   appendTouchedFiles,
   applyGateApproval,
@@ -42,17 +47,17 @@ function createMemoryStorage() {
   };
 }
 
-test("loadBundledSkills loads all 7 core kit skills", () => {
+test("loadBundledSkills loads all 7 core swe skills", () => {
   const skills = loadBundledSkills();
   const ids = skills.map((s) => s.id);
   assert.deepEqual(ids, [
-    "kit-architect",
-    "kit-implementer",
-    "kit-orchestrator",
-    "kit-planner",
-    "kit-researcher",
-    "kit-reviewer",
-    "kit-tester",
+    "swe-architect",
+    "swe-implementer",
+    "swe-orchestrator",
+    "swe-planner",
+    "swe-researcher",
+    "swe-reviewer",
+    "swe-tester",
   ]);
   for (const skill of skills) {
     assert.ok(skill.description && skill.description.length > 10);
@@ -163,9 +168,10 @@ test("parseOptions supports custom stage skills, workflows, and defaultPipeline"
 
   assert.equal(opts.defaultPipeline, "my-flow");
   assert.equal(opts.stageSkills.research, "company-research");
-  assert.equal(opts.stageSkills.plan, "kit-planner");
+  assert.equal(opts.stageSkills.plan, "swe-planner");
   assert.equal(getNextStage("plan", "my-flow", opts.workflows), "architecture");
   assert.equal(getNextStage("test", "quick", opts.workflows), undefined);
+  assert.equal(getNextStage("review", "review", opts.workflows), undefined);
 });
 
 test("workflow state persists, tracks touched files, and renders context", async () => {
@@ -198,26 +204,62 @@ test("workflow state persists, tracks touched files, and renders context", async
   const rendered = renderWorkflowContext({ state: loaded, options, registry });
   assert.match(
     rendered,
-    /<kit-workflow pipeline="feature" stage="implement" status="active" skill="kit-implementer">/,
+    /<swe-workflow pipeline="feature" stage="implement" status="active" skill="swe-implementer">/,
   );
   assert.match(rendered, /Active Profiles: backend\/golang, backend, sql/);
   assert.match(rendered, /Active IMPLEMENT Overlays/);
 });
 
-test("command argument parsers handle flags and leading profiles", () => {
+test("command argument parser extracts profiles and remaining task text", () => {
   const registry = loadProfileRegistry();
-  const orch = parseOrchestrateArgs(
-    "--mode bugfix --profiles frontend/react/ts,go,sql Fix order cancellation",
+  const parsed = parsePipelineArgs(
+    "--profiles frontend/react/ts,go,sql Fix order cancellation",
     registry,
-    BUILTIN_PIPELINES,
   );
-  assert.equal(orch.mode, "bugfix");
-  assert.deepEqual(orch.profiles, ["frontend/react/typescript", "backend/golang", "sql"]);
-  assert.equal(orch.text, "Fix order cancellation");
+  assert.deepEqual(parsed.profiles, ["frontend/react/typescript", "backend/golang", "sql"]);
+  assert.equal(parsed.text, "Fix order cancellation");
+});
 
-  const impl = parseImplementArgs("backend/ts sql go implement cancel handler", registry);
-  assert.deepEqual(impl.profiles, ["backend/typescript", "sql", "backend/golang"]);
-  assert.equal(impl.text, "implement cancel handler");
+test("parseReviewerArgs and inspectGitReviewTarget handle commit IDs and uncommitted default", () => {
+  const registry = loadProfileRegistry();
+  const tmpRepo = mkdtempSync(path.join(os.tmpdir(), "swe-review-git-"));
+  try {
+    execFileSync("git", ["init"], { cwd: tmpRepo, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tmpRepo });
+    execFileSync("git", ["config", "user.name", "Tester"], { cwd: tmpRepo });
+
+    writeFileSync(path.join(tmpRepo, "handler.go"), "package main\n");
+    execFileSync("git", ["add", "handler.go"], { cwd: tmpRepo });
+    execFileSync("git", ["commit", "-m", "add handler"], { cwd: tmpRepo, stdio: "ignore" });
+    const sha = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
+      cwd: tmpRepo,
+      encoding: "utf8",
+    }).trim();
+
+    // Uncommitted default
+    writeFileSync(path.join(tmpRepo, "query.sql"), "SELECT 1;\n");
+    const uncommittedArgs = parseReviewerArgs("--profiles go", registry, tmpRepo);
+    assert.equal(uncommittedArgs.commit, undefined);
+    assert.deepEqual(uncommittedArgs.profiles, ["backend/golang"]);
+
+    const uncommittedTarget = inspectGitReviewTarget(tmpRepo, uncommittedArgs.commit);
+    assert.equal(uncommittedTarget.mode, "uncommitted");
+    assert.deepEqual(uncommittedTarget.changedFiles, ["query.sql"]);
+    assert.match(uncommittedTarget.gitCommandHint, /git diff/);
+
+    // Explicit commit ID + focus text
+    const commitArgs = parseReviewerArgs(`${sha} check error wrapping`, registry, tmpRepo);
+    assert.equal(commitArgs.commit, sha);
+    assert.equal(commitArgs.text, "check error wrapping");
+
+    const commitTarget = inspectGitReviewTarget(tmpRepo, commitArgs.commit);
+    assert.equal(commitTarget.mode, "commit");
+    assert.ok(commitTarget.resolvedSha);
+    assert.deepEqual(commitTarget.changedFiles, ["handler.go"]);
+    assert.match(commitTarget.gitCommandHint, /^git show /);
+  } finally {
+    rmSync(tmpRepo, { recursive: true, force: true });
+  }
 });
 
 test("extractTouchedFilePaths extracts paths from edit/write/patch inputs", () => {
@@ -249,8 +291,8 @@ test("confirmation gates block mutating tools until user responds and gate is ap
   await saveWorkflowState(storage, initial);
 
   assert.equal(checkToolAllowedDuringGate("edit", initial).allowed, false);
-  assert.equal(checkToolAllowedDuringGate("kit_research_save", initial).allowed, false);
-  assert.equal(checkToolAllowedDuringGate("kit_workflow_get", initial).allowed, true);
+  assert.equal(checkToolAllowedDuringGate("swe_research_save", initial).allowed, false);
+  assert.equal(checkToolAllowedDuringGate("swe_workflow_get", initial).allowed, true);
   assert.equal(checkToolAllowedDuringGate("read", initial).allowed, true);
 
   const contextBefore = renderWorkflowContext({ state: initial, options, registry });
@@ -265,7 +307,7 @@ test("confirmation gates block mutating tools until user responds and gate is ap
   assert.equal(unlocked.stage, "research");
   assert.equal(unlocked.pendingGate, undefined);
   assert.deepEqual(unlocked.approvedGates, ["start"]);
-  assert.equal(checkToolAllowedDuringGate("kit_research_save", unlocked).allowed, true);
+  assert.equal(checkToolAllowedDuringGate("swe_research_save", unlocked).allowed, true);
 
   assert.equal(needsGateConfirmation("implement", unlocked, options), true);
   assert.equal(needsGateConfirmation("architecture", unlocked, options), false);

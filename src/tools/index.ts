@@ -175,20 +175,20 @@ export async function registerTools(
 ): Promise<Registration> {
   return ctx.tool.transform((editor) => {
     editor.namespace({
-      name: "kit",
-      description: "Software Engineer Kit workflow state, artifact persistence, and verification tools",
+      name: "swe",
+      description: "Software Engineer workflow state, artifact persistence, and verification tools",
     });
 
     editor.add({
       name: "workflow_get",
       description:
-        "Inspect the current session's Software Engineer Kit workflow stage, pipeline, active profiles, tasks, touched files, and saved artifacts.",
+        "Inspect the current session's SWE workflow stage, pipeline, active profiles, tasks, touched files, and saved artifacts.",
       input: {
         type: "object",
         properties: {},
         additionalProperties: false,
       },
-      options: { namespace: "kit", codemode: true },
+      options: { namespace: "swe", codemode: true },
       execute: async (_input, context) => {
         const state = await getWorkflowState(ctx.storage, context.sessionID);
         if (!state) {
@@ -223,7 +223,7 @@ export async function registerTools(
     editor.add({
       name: "workflow_set",
       description:
-        "Create, update, advance, or reset the Software Engineer Kit workflow state for the current session.",
+        "Create, update, advance, or reset the SWE workflow state for the current session.",
       input: {
         type: "object",
         properties: {
@@ -251,7 +251,7 @@ export async function registerTools(
         },
         additionalProperties: false,
       },
-      options: { namespace: "kit", codemode: true },
+      options: { namespace: "swe", codemode: true },
       execute: async (rawInput, context) => {
         const input = (rawInput ?? {}) as Record<string, unknown>;
         if (input.reset === true) {
@@ -330,7 +330,7 @@ export async function registerTools(
     editor.add({
       name: "workflow_approve",
       description:
-        "Unlock the active confirmation gate ONLY after the user has explicitly approved in chat or via question tool (or use /kit-approve).",
+        "Unlock the active confirmation gate ONLY after the user has explicitly approved in chat or via question tool.",
       input: {
         type: "object",
         properties: {
@@ -338,7 +338,7 @@ export async function registerTools(
         },
         additionalProperties: false,
       },
-      options: { namespace: "kit", codemode: true },
+      options: { namespace: "swe", codemode: true },
       execute: async (rawInput, context) => {
         const input = (rawInput ?? {}) as Record<string, unknown>;
         const current = await getWorkflowState(ctx.storage, context.sessionID);
@@ -354,7 +354,7 @@ export async function registerTools(
               {
                 approved: false,
                 error:
-                  "Cannot approve gate before the user responds. Present the plan/summary to the user and wait for their reply (or ask them to run /kit-approve).",
+                  "Cannot approve gate before the user responds. Present the plan/summary to the user and wait for their reply.",
                 pendingGate: current.pendingGate,
               },
               null,
@@ -395,7 +395,7 @@ export async function registerTools(
         required: ["summary"],
         additionalProperties: false,
       },
-      options: { namespace: "kit", codemode: true },
+      options: { namespace: "swe", codemode: true },
       execute: async (rawInput, context) => {
         const input = (rawInput ?? {}) as Record<string, unknown>;
         const current = await ensureState(ctx, options, registry, context.sessionID);
@@ -449,7 +449,7 @@ export async function registerTools(
         required: ["summary"],
         additionalProperties: false,
       },
-      options: { namespace: "kit", codemode: true },
+      options: { namespace: "swe", codemode: true },
       execute: async (rawInput, context) => {
         const input = (rawInput ?? {}) as Record<string, unknown>;
         const current = await ensureState(ctx, options, registry, context.sessionID);
@@ -485,7 +485,7 @@ export async function registerTools(
         required: ["command"],
         additionalProperties: false,
       },
-      options: { namespace: "kit", codemode: true },
+      options: { namespace: "swe", codemode: true },
       execute: async (rawInput, context) => {
         const input = (rawInput ?? {}) as Record<string, unknown>;
         const command = typeof input.command === "string" ? input.command.trim() : "";
@@ -555,7 +555,7 @@ export async function registerTools(
         required: ["status", "summary"],
         additionalProperties: false,
       },
-      options: { namespace: "kit", codemode: true },
+      options: { namespace: "swe", codemode: true },
       execute: async (rawInput, context) => {
         const input = (rawInput ?? {}) as Record<string, unknown>;
         const current = await ensureState(ctx, options, registry, context.sessionID);
@@ -600,7 +600,7 @@ export async function registerTools(
         required: ["verdict", "summary"],
         additionalProperties: false,
       },
-      options: { namespace: "kit", codemode: true },
+      options: { namespace: "swe", codemode: true },
       execute: async (rawInput, context) => {
         const input = (rawInput ?? {}) as Record<string, unknown>;
         const current = await ensureState(ctx, options, registry, context.sessionID);

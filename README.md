@@ -2,23 +2,26 @@
 
 An **OpenCode V2** server plugin that separates **standalone skills** (`skills/`) from **workflow orchestration, state, tools, and hooks** (`src/`), with shared domain & language overlays inherited across stages.
 
-## Stages & Skills
+## Commands
 
-| Stage | Default Skill ID | Command | Primary Artifact Tool |
-| --- | --- | --- | --- |
-| Orchestrator | `kit-orchestrator` | `/kit-orchestrate`, `/kit-approve` | `kit_workflow_get`, `kit_workflow_set`, `kit_workflow_approve` |
-| Research | `kit-researcher` | `/kit-research` | `kit_research_save` |
-| Architecture | `kit-architect` | `/kit-architect` | `kit_architecture_save` |
-| Plan | `kit-planner` | `/kit-plan` | `kit_workflow_set` |
-| Implement | `kit-implementer` | `/kit-implement` | *(tracked via `tool.hook("execute.after")`)* |
-| Test | `kit-tester` | `/kit-test` | `kit_verify`, `kit_test_record` |
-| Review | `kit-reviewer` | `/kit-review` | `kit_review_record` |
+Four commands are exposed in OpenCode:
 
-## Built-in Pipelines
+- **`/swe-feature [--profiles ...] <task>`** (`feature`, default): `research -> architecture -> plan -> implement -> test -> review`
+- **`/swe-bugfix [--profiles ...] <task>`** (`bugfix`): `research -> plan -> implement -> test -> review`
+- **`/swe-quick [--profiles ...] <task>`** (`quick`): `research -> implement -> test`
+- **`/swe-reviewer [commit-id] [--profiles ...] [focus]`** (`review`): code review for a commit/range or uncommitted changes (defaults to uncommitted) with active domain/language review overlays
 
-- **`feature` (default):** `research -> architecture -> plan -> implement -> test -> review`
-- **`bugfix`:** `research -> plan -> implement -> test -> review`
-- **`quick`:** `research -> implement -> test`
+## Stages, Skills & Tools
+
+| Stage | Default Skill ID | Primary Artifact Tool |
+| --- | --- | --- |
+| Orchestrator | `swe-orchestrator` | `swe_workflow_get`, `swe_workflow_set`, `swe_workflow_approve` |
+| Research | `swe-researcher` | `swe_research_save` |
+| Architecture | `swe-architect` | `swe_architecture_save` |
+| Plan | `swe-planner` | `swe_workflow_set` |
+| Implement | `swe-implementer` | *(tracked via `tool.hook("execute.after")`)* |
+| Test | `swe-tester` | `swe_verify`, `swe_test_record` |
+| Review | `swe-reviewer` | `swe_review_record` |
 
 ## Shared Domain & Language Overlays (`skills/profiles/`)
 
@@ -53,10 +56,10 @@ Selecting `frontend/react/typescript` automatically inherits `frontend` -> `fron
         "trackFileEdits": true,
         "autoDetectProfiles": true,
         "skills": {
-          "research": "kit-researcher"
+          "research": "swe-researcher"
         },
         "profiles": {
-          "rust": {
+          "backend/rust": {
             "implement": "- Prefer Result<T, E> and avoid unwrap() in production code.",
             "test": "- Run cargo test and cargo clippy."
           }

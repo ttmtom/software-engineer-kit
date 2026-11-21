@@ -24,23 +24,24 @@ export const OVERLAY_STAGES: ReadonlySet<Stage> = new Set<Stage>([
   "review",
 ]);
 
-export type BuiltinPipelineName = "feature" | "bugfix" | "quick";
+export type BuiltinPipelineName = "feature" | "bugfix" | "quick" | "review";
 
 export const DEFAULT_STAGE_SKILLS: Readonly<Record<Stage, string>> = {
-  research: "kit-researcher",
-  architecture: "kit-architect",
-  plan: "kit-planner",
-  implement: "kit-implementer",
-  test: "kit-tester",
-  review: "kit-reviewer",
+  research: "swe-researcher",
+  architecture: "swe-architect",
+  plan: "swe-planner",
+  implement: "swe-implementer",
+  test: "swe-tester",
+  review: "swe-reviewer",
 };
 
-export const DEFAULT_ORCHESTRATOR_SKILL = "kit-orchestrator";
+export const DEFAULT_ORCHESTRATOR_SKILL = "swe-orchestrator";
 
 export const BUILTIN_PIPELINES: Readonly<Record<BuiltinPipelineName, readonly Stage[]>> = {
   feature: ["research", "architecture", "plan", "implement", "test", "review"],
   bugfix: ["research", "plan", "implement", "test", "review"],
   quick: ["research", "implement", "test"],
+  review: ["review"],
 };
 
 export function isStage(value: string): value is Stage {

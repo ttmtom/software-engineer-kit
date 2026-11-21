@@ -17,11 +17,11 @@ const GATE_BLOCKED_TOOLS = new Set([
   "write",
   "patch",
   "apply_patch",
-  "kit_verify",
-  "kit_research_save",
-  "kit_architecture_save",
-  "kit_test_record",
-  "kit_review_record",
+  "swe_verify",
+  "swe_research_save",
+  "swe_architecture_save",
+  "swe_test_record",
+  "swe_review_record",
 ]);
 
 export function checkToolAllowedDuringGate(
@@ -36,7 +36,7 @@ export function checkToolAllowedDuringGate(
   }
   return {
     allowed: false,
-    reason: `Workflow is awaiting user approval for gate "${state.pendingGate.gate}" (targetStage: "${state.pendingGate.targetStage}"). Present the summary/plan to the user and wait for explicit approval (or /kit-approve) before running "${toolName}".`,
+    reason: `Workflow is awaiting user approval for gate "${state.pendingGate.gate}" (targetStage: "${state.pendingGate.targetStage}"). Present the summary/plan to the user and wait for explicit approval before running "${toolName}".`,
   };
 }
 

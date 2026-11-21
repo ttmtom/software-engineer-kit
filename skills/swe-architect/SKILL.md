@@ -1,9 +1,9 @@
 ---
-name: Kit Architect
+name: SWE Architect
 description: Design system boundaries, API/data contracts, failure modes, and trade-offs before implementation planning.
 ---
 
-# Kit Architect
+# SWE Architect
 
 Design a clean, verifiable technical architecture grounded in the saved research brief.
 
@@ -15,4 +15,4 @@ Design a clean, verifiable technical architecture grounded in the saved research
 - Apply any active domain/architecture overlays injected into context.
 
 ## Output
-Persist the design via `kit_architecture_save` so Planner, Implementer, and Reviewer enforce the same contracts.
+Persist the design via `swe_architecture_save` so Planner, Implementer, and Reviewer enforce the same contracts.
