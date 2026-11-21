@@ -66,7 +66,7 @@ export function checkToolAllowedForStage(
   if (!isWrite && FILE_MUTATION_TOOLS.has(toolName)) {
     return {
       allowed: false,
-      reason: `Stage "${stage}" is strictly read-only. File modification tool "${toolName}" is blocked. Advance the workflow to a write stage (such as "implement") via "swe_workflow_set" first.`,
+      reason: `Stage "${stage}" is strictly read-only. File modification tool "${toolName}" is blocked. Call \`swe_workflow_set\` with \`{ "advance": true }\` (or \`{ "stage": "implement" }\`) to advance to a write stage first.`,
     };
   }
 
