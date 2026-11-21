@@ -1,5 +1,5 @@
 ---
-name: SWE Orchestrator
+name: swe-orchestrator
 description: Coordinate multi-stage software engineering workflows across research, architecture, planning, implementation, testing, and review with confirmation gates.
 ---
 

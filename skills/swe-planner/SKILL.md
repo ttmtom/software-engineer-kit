@@ -1,5 +1,5 @@
 ---
-name: SWE Planner
+name: swe-planner
 description: Break requirements and architecture contracts into ordered implementation tasks and testable acceptance criteria.
 ---
 

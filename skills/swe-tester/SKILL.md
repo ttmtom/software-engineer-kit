@@ -1,5 +1,5 @@
 ---
-name: SWE Tester
+name: swe-tester
 description: Author targeted tests and execute verification commands (tests, typechecks, linters) with recorded evidence.
 ---
 

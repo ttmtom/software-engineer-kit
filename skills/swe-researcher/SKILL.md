@@ -1,5 +1,5 @@
 ---
-name: SWE Researcher
+name: swe-researcher
 description: Perform read-only codebase analysis and web/documentation research before designing or changing code.
 ---
 

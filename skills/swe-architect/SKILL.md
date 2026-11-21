@@ -1,5 +1,5 @@
 ---
-name: SWE Architect
+name: swe-architect
 description: Design system boundaries, API/data contracts, failure modes, and trade-offs before implementation planning.
 ---
 

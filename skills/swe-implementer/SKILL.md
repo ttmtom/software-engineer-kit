@@ -1,5 +1,5 @@
 ---
-name: SWE Implementer
+name: swe-implementer
 description: Implement planned changes cleanly, matching codebase conventions and active domain/language engineering profiles.
 ---
 
