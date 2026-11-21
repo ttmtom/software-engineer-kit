@@ -1,0 +1,25 @@
+{
+  "name": "software-engineer-kit",
+  "version": "0.1.0",
+  "description": "OpenCode V2 software engineering workflow plugin with orchestrated stages, standalone skills, and shared domain/language overlays.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "skills",
+    "README.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/**/*.test.ts"
+  },
+  "dependencies": {
+    "@opencode/plugin": "^2.3.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  }
+}
