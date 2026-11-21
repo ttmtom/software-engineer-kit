@@ -1,8 +1,9 @@
-import { Error as ToolError } from "@opencode/schema/tool";
-import type { PluginContext, Registration } from "../types.ts";
-import type { KitOptions } from "../options.ts";
-import type { ProfileRegistry } from "../skills/profiles.ts";
-import { isWriteStage, type Stage } from "../workflows/pipelines.ts";
+import {Error as ToolError} from "@opencode/schema/tool";
+import type {PluginContext, Registration} from "../types.ts";
+import type {KitOptions} from "../options.ts";
+import type {ProfileRegistry} from "../skills/profiles.ts";
+import {detectProfiles} from "../skills/profiles.ts";
+import {isWriteStage} from "../workflows/pipelines.ts";
 import {
   appendTouchedFiles,
   createInitialWorkflowState,
@@ -14,7 +15,6 @@ import {
   saveWorkflowState,
   type WorkflowState,
 } from "../workflows/state.ts";
-import { detectProfiles } from "../skills/profiles.ts";
 
 const FILE_MUTATION_TOOLS = new Set(["edit", "write", "patch", "apply_patch"]);
 
@@ -45,9 +45,12 @@ export function checkToolAllowedDuringGate(
   if (!GATE_BLOCKED_TOOLS.has(toolName)) {
     return { allowed: true };
   }
+  const responded = state.pendingGate.userResponded;
   return {
     allowed: false,
-    reason: `Workflow is awaiting user approval for gate "${state.pendingGate.gate}" (targetStage: "${state.pendingGate.targetStage}"). Present the summary/plan to the user and wait for explicit approval before running "${toolName}".`,
+    reason: responded
+      ? `Gate "${state.pendingGate.gate}" is unlocked by the user — call \`swe_workflow_approve\` FIRST to advance to "${state.pendingGate.targetStage}", then you may run "${toolName}".`
+      : `Workflow is awaiting user approval for gate "${state.pendingGate.gate}" (targetStage: "${state.pendingGate.targetStage}"). Present the summary/plan to the user and wait for their explicit confirmation. After they confirm, call \`swe_workflow_approve\` to unlock the gate before running "${toolName}".`,
   };
 }
 

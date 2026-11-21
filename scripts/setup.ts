@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {existsSync, mkdirSync, readFileSync, rmSync, writeFileSync} from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { fileURLToPath } from "node:url";
+import {fileURLToPath} from "node:url";
 
 interface SetupArgs {
   readonly global: boolean;
@@ -100,7 +100,7 @@ export async function runSetup(argv: readonly string[] = process.argv.slice(2)):
       if (existsSync(configFilePath)) {
         const config = loadJsonc(configFilePath);
         const plugins = Array.isArray(config.plugins) ? config.plugins : [];
-        const filtered = plugins.filter((p) => {
+        config.plugins = plugins.filter((p) => {
           if (typeof p === "string") return p !== "software-engineer-kit" && !p.includes("software-engineer-kit");
           if (p && typeof p === "object" && "package" in p) {
             const pkg = String((p as Record<string, unknown>).package ?? "");
@@ -108,7 +108,6 @@ export async function runSetup(argv: readonly string[] = process.argv.slice(2)):
           }
           return true;
         });
-        config.plugins = filtered;
         if (config.default_agent === "swe-agent") {
           delete config.default_agent;
         }

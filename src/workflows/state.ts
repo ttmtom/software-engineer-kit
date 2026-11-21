@@ -1,7 +1,7 @@
-import type { StorageDomain } from "../types.ts";
-import type { KitOptions } from "../options.ts";
-import { renderStageOverlays, type ProfileRegistry } from "../skills/profiles.ts";
-import { getNextStage, getPipelineStages, isOverlayStage, isWriteStage, type Stage } from "./pipelines.ts";
+import type {StorageDomain} from "../types.ts";
+import type {KitOptions} from "../options.ts";
+import {type ProfileRegistry, renderStageOverlays} from "../skills/profiles.ts";
+import {getNextStage, getPipelineStages, isOverlayStage, isWriteStage, type Stage} from "./pipelines.ts";
 
 export interface ResearchRecord {
   readonly summary: string;
@@ -262,8 +262,8 @@ export function renderWorkflowContext(input: {
       `CONFIRMATION GATE ACTIVE: gate="${state.pendingGate.gate}", targetStage="${state.pendingGate.targetStage}", userResponded=${state.pendingGate.userResponded}`,
       `Gate Reason: ${state.pendingGate.summary}`,
       state.pendingGate.userResponded
-        ? `User responded since gate prompt. If they approved, call \`swe_workflow_approve\` to unlock "${state.pendingGate.targetStage}". If they requested changes, update the draft/plan first.`
-        : `STOP: Do NOT start "${state.pendingGate.targetStage}" or edit files yet. Present the summary/plan to the user and wait for explicit approval.`,
+        ? `User has responded. If they approved, call \`swe_workflow_approve\` NOW to unlock "${state.pendingGate.targetStage}" before proceeding. If they requested changes, update the plan first then wait for re-approval.`
+        : `STOP: Do NOT start "${state.pendingGate.targetStage}" or call \`swe_workflow_approve\` yet. Present the summary/plan to the user and wait for their explicit confirmation reply.`,
     );
   } else {
     lines.push(`Instruction: Follow skill "${mappedSkill}" for the current "${state.stage}" stage.`);

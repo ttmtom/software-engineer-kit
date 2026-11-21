@@ -1,52 +1,18 @@
-import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import {
-  inspectGitReviewTarget,
-  parsePipelineArgs,
-  parseReviewerArgs,
-} from "../src/commands/index.ts";
-import { checkToolAllowedDuringGate, checkToolAllowedForStage, extractTouchedFilePaths } from "../src/hooks/index.ts";
-import { parseOptions } from "../src/options.ts";
-import { loadBundledSkills, parseSkillMarkdown } from "../src/skills/loader.ts";
+import {checkToolAllowedForStage} from "../src/hooks";
 import {
   detectProfiles,
-  expandProfileChain,
+  isWriteStage,
+  loadBundledSkills,
   loadProfileRegistry,
-  normalizeProfiles,
-  renderStageOverlays,
-} from "../src/skills/profiles.ts";
-import { getNextStage, isWriteStage } from "../src/workflows/pipelines.ts";
-import {
-  appendTouchedFiles,
-  applyGateApproval,
-  createInitialWorkflowState,
-  createPendingGate,
-  getWorkflowState,
-  markGateUserResponded,
-  needsGateConfirmation,
-  renderWorkflowContext,
-  saveWorkflowState,
-} from "../src/workflows/state.ts";
-import { runSetup } from "../scripts/setup.ts";
-
-function createMemoryStorage() {
-  const map = new Map<string, unknown>();
-  return {
-    async get(key: string) {
-      return map.get(key) as never;
-    },
-    async set(key: string, value: unknown) {
-      map.set(key, value);
-    },
-    async remove(key: string) {
-      map.delete(key);
-    },
-  };
-}
+  parseOptions,
+  parseSkillMarkdown
+} from "../src";
+import {runSetup} from "../scripts/setup.ts";
 
 test("loadBundledSkills loads all 7 core swe skills", () => {
   const skills = loadBundledSkills();
