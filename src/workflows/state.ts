@@ -1,7 +1,7 @@
 import type { StorageDomain } from "../types.ts";
 import type { KitOptions } from "../options.ts";
 import { renderStageOverlays, type ProfileRegistry } from "../skills/profiles.ts";
-import { getNextStage, getPipelineStages, isOverlayStage, type Stage } from "./pipelines.ts";
+import { getNextStage, getPipelineStages, isOverlayStage, isWriteStage, type Stage } from "./pipelines.ts";
 
 export interface ResearchRecord {
   readonly summary: string;
@@ -243,10 +243,12 @@ export function renderWorkflowContext(input: {
   const stages = getPipelineStages(state.pipeline, options.workflows);
   const nextStage = getNextStage(state.stage, state.pipeline, options.workflows);
   const mappedSkill = options.stageSkills[state.stage];
+  const access = options.stageAccess[state.stage] ?? (isWriteStage(state.stage, options.stageAccess) ? "write" : "readonly");
 
   const lines: string[] = [
-    `<swe-workflow pipeline="${state.pipeline}" stage="${state.stage}" status="${state.status}" skill="${mappedSkill}">`,
+    `<swe-workflow pipeline="${state.pipeline}" stage="${state.stage}" access="${access}" status="${state.status}" skill="${mappedSkill}">`,
     `Goal: ${state.goal || "(unspecified)"}`,
+    `Stage Access: ${access.toUpperCase()} (${access === "readonly" ? "Do NOT edit files" : "File modifications permitted"})`,
     `Pipeline Order: ${stages.join(" -> ")}`,
     `Next Stage: ${nextStage ?? "(final stage)"}`,
     ...(state.stage === "review" && state.reviewTarget

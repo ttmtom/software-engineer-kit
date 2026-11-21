@@ -1,17 +1,23 @@
 {
   "name": "software-engineer-kit",
   "version": "0.1.0",
-  "description": "OpenCode V2 software engineering workflow plugin with orchestrated stages, standalone skills, and shared domain/language overlays.",
+  "description": "OpenCode V2 software engineering workflow plugin & master swe-agent with orchestrated stages, standalone skills, and shared domain/language overlays.",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
   },
+  "bin": {
+    "swe-kit-setup": "./scripts/setup.ts"
+  },
   "files": [
     "src",
     "skills",
+    "agents",
+    "scripts",
     "README.md"
   ],
   "scripts": {
+    "setup": "node --experimental-strip-types scripts/setup.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-strip-types --test test/**/*.test.ts"
   },

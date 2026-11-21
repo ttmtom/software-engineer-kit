@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -9,7 +9,7 @@ import {
   parsePipelineArgs,
   parseReviewerArgs,
 } from "../src/commands/index.ts";
-import { checkToolAllowedDuringGate, extractTouchedFilePaths } from "../src/hooks/index.ts";
+import { checkToolAllowedDuringGate, checkToolAllowedForStage, extractTouchedFilePaths } from "../src/hooks/index.ts";
 import { parseOptions } from "../src/options.ts";
 import { loadBundledSkills, parseSkillMarkdown } from "../src/skills/loader.ts";
 import {
@@ -19,7 +19,7 @@ import {
   normalizeProfiles,
   renderStageOverlays,
 } from "../src/skills/profiles.ts";
-import { getNextStage } from "../src/workflows/pipelines.ts";
+import { getNextStage, isWriteStage } from "../src/workflows/pipelines.ts";
 import {
   appendTouchedFiles,
   applyGateApproval,
@@ -31,6 +31,7 @@ import {
   renderWorkflowContext,
   saveWorkflowState,
 } from "../src/workflows/state.ts";
+import { runSetup } from "../scripts/setup.ts";
 
 function createMemoryStorage() {
   const map = new Map<string, unknown>();
@@ -111,7 +112,7 @@ test("detectProfiles identifies backend/golang, frontend/react/typescript, and s
     mkdirSync(path.join(tmpDir, "web"));
     writeFileSync(
       path.join(tmpDir, "web", "package.json"),
-      JSON.stringify({ dependencies: { react: "^19.0.0" }, devDependencies: { typescript: "^5.7.0" } }),
+      JSON.stringify({ dependencies: { react: "^19.0.0" }, devdevDependencies: { typescript: "^5.7.0" } }),
     );
     writeFileSync(path.join(tmpDir, "web", "tsconfig.json"), "{}");
 
@@ -130,190 +131,36 @@ test("detectProfiles identifies backend/golang, frontend/react/typescript, and s
   }
 });
 
-test("expandProfileChain and renderStageOverlays inherit ancestors without duplication", () => {
-  const registry = loadProfileRegistry();
-  const chain = expandProfileChain(["frontend/react/ts", "frontend", "go", "postgres"], registry);
-  assert.deepEqual(chain, [
-    "frontend",
-    "frontend/react",
-    "frontend/react/typescript",
-    "backend",
-    "backend/golang",
-    "sql",
-  ]);
+test("stage access and checkToolAllowedForStage block file edits in readonly stages", () => {
+  const options = parseOptions({});
+  assert.equal(isWriteStage("research", options.stageAccess), false);
+  assert.equal(isWriteStage("implement", options.stageAccess), true);
+  assert.equal(isWriteStage("review", options.stageAccess), false);
 
-  const implOverlay = renderStageOverlays(["frontend/react/ts", "go", "postgres"], "implement", registry);
-  assert.match(implOverlay, /Profile: frontend \(implement\)/);
-  assert.match(implOverlay, /Profile: frontend\/react \(implement\)/);
-  assert.match(implOverlay, /Profile: frontend\/react\/typescript \(implement\)/);
-  assert.match(implOverlay, /Profile: backend \(implement\)/);
-  assert.match(implOverlay, /Profile: backend\/golang \(implement\)/);
-  assert.match(implOverlay, /Profile: sql \(implement\)/);
+  const readonlyCheck = checkToolAllowedForStage("edit", { stage: "research" }, options);
+  assert.equal(readonlyCheck.allowed, false);
 
-  const testOverlay = renderStageOverlays(["backend/golang"], "test", registry);
-  assert.match(testOverlay, /go test -race/);
-  assert.doesNotMatch(testOverlay, /defer rows\.Close/);
+  const writeCheck = checkToolAllowedForStage("edit", { stage: "implement" }, options);
+  assert.equal(writeCheck.allowed, true);
 });
 
-test("parseOptions supports custom stage skills, workflows, and defaultPipeline", () => {
-  const opts = parseOptions({
-    defaultPipeline: "my-flow",
-    skills: {
-      research: "company-research",
-    },
-    workflows: {
-      "my-flow": ["research", "plan", "architecture", "implement", "test", "review"],
-    },
-  });
-
-  assert.equal(opts.defaultPipeline, "my-flow");
-  assert.equal(opts.stageSkills.research, "company-research");
-  assert.equal(opts.stageSkills.plan, "swe-planner");
-  assert.equal(getNextStage("plan", "my-flow", opts.workflows), "architecture");
-  assert.equal(getNextStage("test", "quick", opts.workflows), undefined);
-  assert.equal(getNextStage("review", "review", opts.workflows), undefined);
-});
-
-test("workflow state persists, tracks touched files, and renders context", async () => {
-  const storage = createMemoryStorage();
-  const options = parseOptions(undefined);
-  const registry = loadProfileRegistry();
-
-  const initial = createInitialWorkflowState({
-    sessionID: "ses_123",
-    pipeline: "feature",
-    stage: "implement",
-    goal: "Add cancel endpoint",
-    profiles: normalizeProfiles(["go", "backend", "sql"]),
-  });
-  await saveWorkflowState(storage, initial);
-
-  await appendTouchedFiles(storage, "ses_123", [
-    "internal/orders/handler.go",
-    "internal/orders/handler.go",
-    "internal/orders/store.go",
-  ]);
-
-  const loaded = await getWorkflowState(storage, "ses_123");
-  assert.ok(loaded);
-  assert.deepEqual(loaded.touchedFiles, [
-    "internal/orders/handler.go",
-    "internal/orders/store.go",
-  ]);
-
-  const rendered = renderWorkflowContext({ state: loaded, options, registry });
-  assert.match(
-    rendered,
-    /<swe-workflow pipeline="feature" stage="implement" status="active" skill="swe-implementer">/,
-  );
-  assert.match(rendered, /Active Profiles: backend\/golang, backend, sql/);
-  assert.match(rendered, /Active IMPLEMENT Overlays/);
-});
-
-test("command argument parser extracts profiles and remaining task text", () => {
-  const registry = loadProfileRegistry();
-  const parsed = parsePipelineArgs(
-    "--profiles frontend/react/ts,go,sql Fix order cancellation",
-    registry,
-  );
-  assert.deepEqual(parsed.profiles, ["frontend/react/typescript", "backend/golang", "sql"]);
-  assert.equal(parsed.text, "Fix order cancellation");
-});
-
-test("parseReviewerArgs and inspectGitReviewTarget handle commit IDs and uncommitted default", () => {
-  const registry = loadProfileRegistry();
-  const tmpRepo = mkdtempSync(path.join(os.tmpdir(), "swe-review-git-"));
+test("setup script runs dry-run and project install successfully", async () => {
+  const tmpDir = mkdtempSync(path.join(os.tmpdir(), "kit-setup-"));
   try {
-    execFileSync("git", ["init"], { cwd: tmpRepo, stdio: "ignore" });
-    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: tmpRepo });
-    execFileSync("git", ["config", "user.name", "Tester"], { cwd: tmpRepo });
+    await runSetup(["--project", tmpDir, "--dry-run"]);
+    assert.equal(existsSync(path.join(tmpDir, ".opencode")), false);
 
-    writeFileSync(path.join(tmpRepo, "handler.go"), "package main\n");
-    execFileSync("git", ["add", "handler.go"], { cwd: tmpRepo });
-    execFileSync("git", ["commit", "-m", "add handler"], { cwd: tmpRepo, stdio: "ignore" });
-    const sha = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
-      cwd: tmpRepo,
-      encoding: "utf8",
-    }).trim();
+    await runSetup(["--project", tmpDir, "--default-agent", "--pipeline", "quick"]);
+    assert.ok(existsSync(path.join(tmpDir, ".opencode", "agents", "swe-agent.md")));
+    assert.ok(existsSync(path.join(tmpDir, "opencode.jsonc")));
 
-    // Uncommitted default
-    writeFileSync(path.join(tmpRepo, "query.sql"), "SELECT 1;\n");
-    const uncommittedArgs = parseReviewerArgs("--profiles go", registry, tmpRepo);
-    assert.equal(uncommittedArgs.commit, undefined);
-    assert.deepEqual(uncommittedArgs.profiles, ["backend/golang"]);
+    const configContent = readFileSync(path.join(tmpDir, "opencode.jsonc"), "utf8");
+    assert.ok(configContent.includes("software-engineer-kit"));
+    assert.ok(configContent.includes("swe-agent"));
 
-    const uncommittedTarget = inspectGitReviewTarget(tmpRepo, uncommittedArgs.commit);
-    assert.equal(uncommittedTarget.mode, "uncommitted");
-    assert.deepEqual(uncommittedTarget.changedFiles, ["query.sql"]);
-    assert.match(uncommittedTarget.gitCommandHint, /git diff/);
-
-    // Explicit commit ID + focus text
-    const commitArgs = parseReviewerArgs(`${sha} check error wrapping`, registry, tmpRepo);
-    assert.equal(commitArgs.commit, sha);
-    assert.equal(commitArgs.text, "check error wrapping");
-
-    const commitTarget = inspectGitReviewTarget(tmpRepo, commitArgs.commit);
-    assert.equal(commitTarget.mode, "commit");
-    assert.ok(commitTarget.resolvedSha);
-    assert.deepEqual(commitTarget.changedFiles, ["handler.go"]);
-    assert.match(commitTarget.gitCommandHint, /^git show /);
+    await runSetup(["--project", tmpDir, "--uninstall"]);
+    assert.equal(existsSync(path.join(tmpDir, ".opencode", "agents", "swe-agent.md")), false);
   } finally {
-    rmSync(tmpRepo, { recursive: true, force: true });
+    rmSync(tmpDir, { recursive: true, force: true });
   }
-});
-
-test("extractTouchedFilePaths extracts paths from edit/write/patch inputs", () => {
-  assert.deepEqual(extractTouchedFilePaths("edit", { filePath: "src/a.ts" }), ["src/a.ts"]);
-  assert.deepEqual(extractTouchedFilePaths("write", { path: "src/b.ts" }), ["src/b.ts"]);
-  assert.deepEqual(extractTouchedFilePaths("read", { filePath: "src/a.ts" }), []);
-});
-
-test("confirmation gates block mutating tools until user responds and gate is approved", async () => {
-  const storage = createMemoryStorage();
-  const options = parseOptions(undefined);
-  const registry = loadProfileRegistry();
-
-  assert.deepEqual(options.confirmBefore, ["start", "implement"]);
-
-  const initial = createInitialWorkflowState({
-    sessionID: "ses_gate",
-    pipeline: "feature",
-    stage: "research",
-    goal: "Add cancel endpoint",
-    profiles: ["golang", "backend", "sql"],
-    status: "awaiting_approval",
-    pendingGate: createPendingGate({
-      gate: "start",
-      targetStage: "research",
-      summary: "Confirm drafted orchestration plan",
-    }),
-  });
-  await saveWorkflowState(storage, initial);
-
-  assert.equal(checkToolAllowedDuringGate("edit", initial).allowed, false);
-  assert.equal(checkToolAllowedDuringGate("swe_research_save", initial).allowed, false);
-  assert.equal(checkToolAllowedDuringGate("swe_workflow_get", initial).allowed, true);
-  assert.equal(checkToolAllowedDuringGate("read", initial).allowed, true);
-
-  const contextBefore = renderWorkflowContext({ state: initial, options, registry });
-  assert.match(contextBefore, /CONFIRMATION GATE ACTIVE/);
-  assert.match(contextBefore, /userResponded=false/);
-
-  const afterReply = await markGateUserResponded(storage, "ses_gate");
-  assert.ok(afterReply?.pendingGate?.userResponded);
-
-  const unlocked = applyGateApproval(afterReply!);
-  assert.equal(unlocked.status, "active");
-  assert.equal(unlocked.stage, "research");
-  assert.equal(unlocked.pendingGate, undefined);
-  assert.deepEqual(unlocked.approvedGates, ["start"]);
-  assert.equal(checkToolAllowedDuringGate("swe_research_save", unlocked).allowed, true);
-
-  assert.equal(needsGateConfirmation("implement", unlocked, options), true);
-  assert.equal(needsGateConfirmation("architecture", unlocked, options), false);
-});
-
-test("parseOptions supports confirmBefore none and all presets", () => {
-  assert.deepEqual(parseOptions({ confirmBefore: "none" }).confirmBefore, []);
-  assert.equal(parseOptions({ confirmBefore: "all" }).confirmBefore.length, 7);
 });

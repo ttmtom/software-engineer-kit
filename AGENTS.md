@@ -2,13 +2,14 @@
 
 ## Project Purpose
 
-An **OpenCode V2 plugin** that orchestrates multi-stage software engineering workflows with AI agents. It separates standalone skill prompts (`skills/`) from workflow state, tools, hooks, and commands (`src/`), and injects domain/language overlays from hierarchical profiles at appropriate stages.
+An **OpenCode V2 plugin and master `swe-agent`** that orchestrates multi-stage software engineering workflows. It separates standalone skill prompts (`skills/`) from workflow state, tools, hooks, and commands (`src/`), injects domain/language overlays from hierarchical profiles at appropriate stages, and strictly enforces read-only vs. write stage access.
 
 ---
 
 ## Dev Commands
 
 ```bash
+npm run setup       # Run setup script (global install by default)
 npm run typecheck   # tsc --noEmit — run after every source change
 npm test            # node --experimental-strip-types --test test/**/*.test.ts
 ```
@@ -21,9 +22,10 @@ Always run `typecheck` before considering a change complete. There is no build s
 
 - **TypeScript ESM only** — all local imports use `.ts` extensions, no CommonJS.
 - **State is session-scoped** — `WorkflowState` is stored via `ctx.storage` keyed by `software-engineer-kit/workflow/<sessionID>`.
-- **Skills are loaded from `skills/<name>/SKILL.md`** — subdirectories of `skills/` (excluding `profiles/`) are bundled; each must contain a `SKILL.md`.
-- **Profile files drive overlays** — hierarchical Markdown files under `skills/profiles/` with `## Architecture`, `## Implement`, `## Test`, and `## Review` sections.
-- **Gate enforcement is in the hook** — `checkToolAllowedDuringGate` in `src/hooks/index.ts` is the single source of truth for which tools are blocked during approval (`status === "awaiting_approval"`).
+- **Master Agent** — `swe-agent` (`agents/swe-agent.md`) acts as the primary conversational orchestrator.
+- **Stage Access Enforcement** — `research`, `architecture`, `plan`, and `review` are strictly `readonly` (file mutation tools blocked). `implement` and `test` are `write` stages.
+- **Gate Enforcement** — `checkToolAllowedDuringGate` and `checkToolAllowedForStage` in `src/hooks/index.ts` enforce approval gates (`status === "awaiting_approval"`) before write stages.
+- **Setup script** — `scripts/setup.ts` (`npm run setup`) installs `swe-agent.md` and updates `opencode.jsonc`.
 
 ---
 
@@ -31,9 +33,9 @@ Always run `typecheck` before considering a change complete. There is no build s
 
 `Stage` = `research | architecture | plan | implement | test | review`
 
-- **feature** *(default)*: research → architecture → plan → implement → test → review
-- **bugfix**: research → plan → implement → test → review
-- **quick**: research → implement → test
+- **feature** *(default)*: research (readonly) → architecture (readonly) → plan (readonly) → implement (write) → test (write) → review (readonly)
+- **bugfix**: research (readonly) → plan (readonly) → implement (write) → test (write) → review (readonly)
+- **quick**: research (readonly) → implement (write) → test (write)
 
 Commands: `/swe-feature`, `/swe-bugfix`, `/swe-quick`, `/swe-reviewer [commit-id]`.
 

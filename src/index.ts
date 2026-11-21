@@ -20,6 +20,17 @@ export default Plugin.define({
     const registry = loadProfileRegistry(options.profiles);
     const registrations: Registration[] = [];
 
+    if (options.setDefaultAgent) {
+      registrations.push(
+        await ctx.agent.transform((editor) => {
+          const agent = editor.get(options.agentId);
+          if (agent) {
+            editor.default(options.agentId);
+          }
+        }),
+      );
+    }
+
     if (options.registerBundledSkills) {
       const bundledSkills = loadBundledSkills();
       if (bundledSkills.length > 0) {
@@ -35,7 +46,7 @@ export default Plugin.define({
 
     registrations.push(await registerTools(ctx, options, registry));
     registrations.push(await registerCommands(ctx, options, registry));
-    registrations.push(...(await registerHooks(ctx, options, registry)));
+    registrations.push(await registerHooks(ctx, options, registry));
 
     return async () => {
       await Promise.allSettled(registrations.map((r) => r.dispose()));

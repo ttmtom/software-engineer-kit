@@ -1,43 +1,60 @@
 # software-engineer-kit
 
-An **OpenCode V2** server plugin that separates **standalone skills** (`skills/`) from **workflow orchestration, state, tools, and hooks** (`src/`), with shared domain & language overlays inherited across stages.
+An **OpenCode V2** server plugin and master **`swe-agent`** that separates **standalone skills** (`skills/`) from **workflow orchestration, state, tools, and hooks** (`src/`), with shared domain & language overlays inherited across stages and strict read-only/write stage separation.
+
+## Master `swe-agent` & Setup
+
+Select **`swe-agent`** in OpenCode (or set it as your default agent) and converse naturally to orchestrate engineering tasks.
+
+To install `swe-agent` and configure the plugin globally (`~/.config/opencode/`):
+
+```bash
+npm run setup
+```
+
+Options:
+- `--project [dir]` — install into a specific project directory (`.opencode/` + `opencode.jsonc`).
+- `--default-agent` — automatically set `swe-agent` as OpenCode's default agent.
+- `--pipeline <feature|bugfix|quick>` — set default pipeline.
+- `--uninstall` — remove agent definition and plugin configuration.
 
 ## Commands
 
-Four commands are exposed in OpenCode:
+Four commands are also available as shortcuts:
 
 - **`/swe-feature [--profiles ...] <task>`** (`feature`, default): `research -> architecture -> plan -> implement -> test -> review`
 - **`/swe-bugfix [--profiles ...] <task>`** (`bugfix`): `research -> plan -> implement -> test -> review`
 - **`/swe-quick [--profiles ...] <task>`** (`quick`): `research -> implement -> test`
-- **`/swe-reviewer [commit-id] [--profiles ...] [focus]`** (`review`): code review for a commit/range or uncommitted changes (defaults to uncommitted) with active domain/language review overlays
+- **`/swe-reviewer [commit-id] [--profiles ...] [focus]`** (`review`): code review for a commit/range or uncommitted changes with active domain/language review overlays
 
-## Stages, Skills & Tools
+## Stages, Access Rules, Skills & Tools
 
-| Stage | Default Skill ID | Primary Artifact Tool |
-| --- | --- | --- |
-| Orchestrator | `swe-orchestrator` | `swe_workflow_get`, `swe_workflow_set`, `swe_workflow_approve` |
-| Research | `swe-researcher` | `swe_research_save` |
-| Architecture | `swe-architect` | `swe_architecture_save` |
-| Plan | `swe-planner` | `swe_workflow_set` |
-| Implement | `swe-implementer` | *(tracked via `tool.hook("execute.after")`)* |
-| Test | `swe-tester` | `swe_verify`, `swe_test_record` |
-| Review | `swe-reviewer` | `swe_review_record` |
+| Stage | Access | Default Skill ID | Primary Artifact / Action Tool |
+| --- | --- | --- | --- |
+| Orchestrator | — | `swe-orchestrator` | `swe_workflow_get`, `swe_workflow_set`, `swe_workflow_approve` |
+| Research | **Readonly** | `swe-researcher` | `swe_research_save` |
+| Architecture | **Readonly** | `swe-architect` | `swe_architecture_save` |
+| Plan | **Readonly** | `swe-planner` | `swe_workflow_set` |
+| Implement | **Write** | `swe-implementer` | *(File edits / tracked via hook)* |
+| Test | **Write** | `swe-tester` | `swe_verify`, `swe_test_record` |
+| Review | **Readonly** | `swe-reviewer` | `swe_review_record` |
+
+- **Read-only vs Write**: File modification tools (`edit`, `write`, `patch`) are strictly blocked during `research`, `architecture`, `plan`, and `review` stages.
+- **Confirmation Gates**: Entering `implement` or `test` pauses at `awaiting_approval`. Present the plan, wait for user confirmation, and call `swe_workflow_approve` before executing writes.
 
 ## Shared Domain & Language Overlays (`skills/profiles/`)
 
 Profiles support **hierarchical path inheritance** (`domain/framework/language`):
 
 - `backend.md`
-  - `backend/golang` (`skills/profiles/backend/golang.md`)
-  - `backend/typescript` (`skills/profiles/backend/typescript.md`)
+  - `backend/golang`
+  - `backend/typescript`
 - `frontend.md`
-  - `frontend/typescript` (`skills/profiles/frontend/typescript.md`)
-  - `frontend/react` (`skills/profiles/frontend/react.md`)
-  - `frontend/react/typescript` (`skills/profiles/frontend/react/typescript.md`)
+  - `frontend/typescript`
+  - `frontend/react`
+  - `frontend/react/typescript`
 - `sql.md`
 - `devops.md`
-
-Selecting `frontend/react/typescript` automatically inherits `frontend` -> `frontend/react` -> `frontend/react/typescript`, and selecting `backend/golang` automatically inherits `backend` -> `backend/golang`, with stage-specific sections injected for `architecture`, `implement`, `test`, and `review`.
 
 ## Configuration (`opencode.jsonc`)
 
@@ -48,22 +65,23 @@ Selecting `frontend/react/typescript` automatically inherits `frontend` -> `fron
     {
       "package": "software-engineer-kit",
       "options": {
+        "agentId": "swe-agent",
+        "autoStartOnAgentPrompt": true,
+        "scopeToAgent": true,
         "defaultPipeline": "feature",
-        "confirmBefore": ["start", "implement"],
+        "confirmBefore": ["implement", "test"],
+        "stageAccess": {
+          "research": "readonly",
+          "architecture": "readonly",
+          "plan": "readonly",
+          "implement": "write",
+          "test": "write",
+          "review": "readonly"
+        },
         "registerBundledSkills": true,
-        "overrideExistingSkills": false,
         "autoInjectContext": true,
         "trackFileEdits": true,
-        "autoDetectProfiles": true,
-        "skills": {
-          "research": "swe-researcher"
-        },
-        "profiles": {
-          "backend/rust": {
-            "implement": "- Prefer Result<T, E> and avoid unwrap() in production code.",
-            "test": "- Run cargo test and cargo clippy."
-          }
-        }
+        "autoDetectProfiles": true
       }
     }
   ]

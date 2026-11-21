@@ -13,6 +13,7 @@ import {
   createInitialWorkflowState,
   createPendingGate,
   getWorkflowState,
+  needsGateConfirmation,
   saveWorkflowState,
 } from "../workflows/state.ts";
 
@@ -202,6 +203,12 @@ async function startPipelineWorkflow(input: {
   const stages: readonly Stage[] = getPipelineStages(pipeline, options.workflows);
   const firstStage = stages[0] ?? "research";
 
+  try {
+    await ctx.session.switchAgent({ sessionID, agent: options.agentId });
+  } catch {
+    // Ignore if agent switch is not permitted or fails
+  }
+
   const profiles =
     parsed.profiles.length > 0
       ? parsed.profiles
@@ -213,7 +220,7 @@ async function startPipelineWorkflow(input: {
           })
         : [];
 
-  const requireStartConfirm = options.confirmBefore.includes("start");
+  const requireStartConfirm = needsGateConfirmation(firstStage, { approvedGates: [] }, options);
   const initialState = createInitialWorkflowState({
     sessionID,
     pipeline,
@@ -224,10 +231,9 @@ async function startPipelineWorkflow(input: {
     ...(requireStartConfirm
       ? {
           pendingGate: createPendingGate({
-            gate: "start",
+            gate: firstStage,
             targetStage: firstStage,
-            summary:
-              "Draft the orchestration plan (pipeline, detected profiles, scope, and assumptions) and wait for user approval before starting research.",
+            summary: `User approval required before starting "${firstStage}" stage.`,
           }),
         }
       : {}),
@@ -330,6 +336,12 @@ export async function registerCommands(
       description:
         "Run SWE code review for a commit ID or uncommitted changes (default: uncommitted)",
       execute: async ({ sessionID, prompt, delivery }) => {
+        try {
+          await ctx.session.switchAgent({ sessionID, agent: options.agentId });
+        } catch {
+          // Ignore
+        }
+
         const parsed = parseReviewerArgs(prompt.text, registry, ctx.location.directory);
         const gitTarget = inspectGitReviewTarget(ctx.location.directory, parsed.commit);
         const existing = await getWorkflowState(ctx.storage, sessionID);

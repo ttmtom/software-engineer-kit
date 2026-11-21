@@ -2,13 +2,19 @@ import { Error as ToolError } from "@opencode/schema/tool";
 import type { PluginContext, Registration } from "../types.ts";
 import type { KitOptions } from "../options.ts";
 import type { ProfileRegistry } from "../skills/profiles.ts";
+import { isWriteStage, type Stage } from "../workflows/pipelines.ts";
 import {
   appendTouchedFiles,
+  createInitialWorkflowState,
+  createPendingGate,
   getWorkflowState,
   markGateUserResponded,
+  needsGateConfirmation,
   renderWorkflowContext,
+  saveWorkflowState,
   type WorkflowState,
 } from "../workflows/state.ts";
+import { detectProfiles } from "../skills/profiles.ts";
 
 const FILE_MUTATION_TOOLS = new Set(["edit", "write", "patch", "apply_patch"]);
 
@@ -45,6 +51,25 @@ export function checkToolAllowedDuringGate(
   };
 }
 
+export function checkToolAllowedForStage(
+  toolName: string,
+  state: Pick<WorkflowState, "stage"> | undefined,
+  options: KitOptions,
+): { allowed: true } | { allowed: false; reason: string } {
+  if (!state) return { allowed: true };
+  const stage = state.stage;
+  const isWrite = isWriteStage(stage, options.stageAccess);
+
+  if (!isWrite && FILE_MUTATION_TOOLS.has(toolName)) {
+    return {
+      allowed: false,
+      reason: `Stage "${stage}" is strictly read-only. File modification tool "${toolName}" is blocked. Advance the workflow to a write stage (such as "implement") via "swe_workflow_set" first.`,
+    };
+  }
+
+  return { allowed: true };
+}
+
 export function extractTouchedFilePaths(toolName: string, input: unknown): string[] {
   if (!FILE_MUTATION_TOOLS.has(toolName)) return [];
   if (!input || typeof input !== "object") return [];
@@ -72,17 +97,56 @@ export async function registerHooks(
   ctx: PluginContext,
   options: KitOptions,
   registry: ProfileRegistry,
-): Promise<Registration[]> {
+): Promise<Registration> {
   const registrations: Registration[] = [];
 
   if (options.autoInjectContext) {
     registrations.push(
       await ctx.session.hook("context", async (event) => {
-        const state = await getWorkflowState(ctx.storage, event.sessionID);
+        let state = await getWorkflowState(ctx.storage, event.sessionID);
+        const isSweAgent = event.agent === options.agentId;
+
+        if (!state && options.autoStartOnAgentPrompt && isSweAgent) {
+          const pipeline = options.defaultPipeline;
+          const firstStage = "research";
+          const profiles = options.autoDetectProfiles
+            ? detectProfiles({ directory: ctx.location.directory, registry })
+            : [];
+          const requireGate = needsGateConfirmation(firstStage, { approvedGates: [] }, options);
+
+          state = await saveWorkflowState(
+            ctx.storage,
+            createInitialWorkflowState({
+              sessionID: event.sessionID,
+              pipeline,
+              stage: firstStage,
+              goal: "",
+              profiles,
+              status: requireGate ? "awaiting_approval" : "active",
+              ...(requireGate
+                ? {
+                    pendingGate: createPendingGate({
+                      gate: firstStage,
+                      targetStage: firstStage,
+                      summary: `User approval required before starting "${firstStage}" stage.`,
+                    }),
+                  }
+                : {}),
+            }),
+          );
+        }
+
         if (!state) return;
 
         const block = renderWorkflowContext({ state, options, registry });
         event.system.push({ type: "text", text: block });
+
+        const isReadonly = !isWriteStage(state.stage, options.stageAccess) || state.status === "awaiting_approval";
+        if (options.scopeToAgent && isReadonly) {
+          for (const toolName of FILE_MUTATION_TOOLS) {
+            delete event.tools[toolName];
+          }
+        }
       }),
     );
   }
@@ -90,15 +154,57 @@ export async function registerHooks(
   registrations.push(
     await ctx.session.hook("prompt", async (event) => {
       await markGateUserResponded(ctx.storage, event.sessionID);
+
+      const state = await getWorkflowState(ctx.storage, event.sessionID);
+      if (!state && options.autoStartOnAgentPrompt) {
+        const pipeline = options.defaultPipeline;
+        const firstStage = "research";
+        const goal = event.prompt.text;
+        const profiles = options.autoDetectProfiles
+          ? detectProfiles({ promptText: goal, directory: ctx.location.directory, registry })
+          : [];
+        const requireGate = needsGateConfirmation(firstStage, { approvedGates: [] }, options);
+
+        await saveWorkflowState(
+          ctx.storage,
+          createInitialWorkflowState({
+            sessionID: event.sessionID,
+            pipeline,
+            stage: firstStage,
+            goal,
+            profiles,
+            status: requireGate ? "awaiting_approval" : "active",
+            ...(requireGate
+              ? {
+                  pendingGate: createPendingGate({
+                    gate: firstStage,
+                    targetStage: firstStage,
+                    summary: `User approval required before starting "${firstStage}" stage.`,
+                  }),
+                }
+              : {}),
+          }),
+        );
+      } else if (state && !state.goal && event.prompt.text) {
+        await saveWorkflowState(ctx.storage, {
+          ...state,
+          goal: event.prompt.text,
+        });
+      }
     }),
   );
 
   registrations.push(
     await ctx.tool.hook("execute.before", async (event) => {
       const state = await getWorkflowState(ctx.storage, event.sessionID);
-      const check = checkToolAllowedDuringGate(event.tool, state);
-      if (!check.allowed) {
-        throw new ToolError({ message: check.reason });
+      const gateCheck = checkToolAllowedDuringGate(event.tool, state);
+      if (!gateCheck.allowed) {
+        throw new ToolError({ message: gateCheck.reason });
+      }
+
+      const stageCheck = checkToolAllowedForStage(event.tool, state, options);
+      if (!stageCheck.allowed) {
+        throw new ToolError({ message: stageCheck.reason });
       }
     }),
   );
@@ -120,5 +226,9 @@ export async function registerHooks(
     }),
   );
 
-  return registrations;
+  return {
+    async dispose() {
+      await Promise.allSettled(registrations.map((r) => r.dispose()));
+    },
+  };
 }

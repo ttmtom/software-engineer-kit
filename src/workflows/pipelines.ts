@@ -15,6 +15,21 @@ export const ALL_STAGES: readonly Stage[] = [
   "review",
 ] as const;
 
+export type StageAccess = "readonly" | "write";
+
+export const DEFAULT_STAGE_ACCESS: Readonly<Record<Stage, StageAccess>> = {
+  research: "readonly",
+  architecture: "readonly",
+  plan: "readonly",
+  implement: "write",
+  test: "write",
+  review: "readonly",
+};
+
+export function isWriteStage(stage: Stage, stageAccess: Readonly<Record<Stage, StageAccess>> = DEFAULT_STAGE_ACCESS): boolean {
+  return stageAccess[stage] === "write";
+}
+
 export type OverlayStage = "architecture" | "implement" | "test" | "review";
 
 export const OVERLAY_STAGES: ReadonlySet<Stage> = new Set<Stage>([

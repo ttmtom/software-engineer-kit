@@ -2,15 +2,21 @@ import type { PluginOptions } from "@opencode/plugin";
 import {
   BUILTIN_PIPELINES,
   DEFAULT_ORCHESTRATOR_SKILL,
+  DEFAULT_STAGE_ACCESS,
   DEFAULT_STAGE_SKILLS,
   isStage,
   type OverlayStage,
   type Stage,
+  type StageAccess,
 } from "./workflows/pipelines.ts";
 
 export type ProfileSections = Partial<Record<OverlayStage, string>>;
 
 export interface KitOptions {
+  readonly agentId: string;
+  readonly autoStartOnAgentPrompt: boolean;
+  readonly scopeToAgent: boolean;
+  readonly setDefaultAgent: boolean;
   readonly registerBundledSkills: boolean;
   readonly overrideExistingSkills: boolean;
   readonly autoInjectContext: boolean;
@@ -20,6 +26,7 @@ export interface KitOptions {
   readonly confirmBefore: readonly string[];
   readonly orchestratorSkill: string;
   readonly stageSkills: Readonly<Record<Stage, string>>;
+  readonly stageAccess: Readonly<Record<Stage, StageAccess>>;
   readonly workflows: Readonly<Record<string, readonly Stage[]>>;
   readonly profiles: Readonly<Record<string, ProfileSections>>;
   readonly verifyCommands: readonly string[];
@@ -46,6 +53,19 @@ function parseStageSkills(raw: unknown): Record<Stage, string> {
   for (const stage of Object.keys(result) as Stage[]) {
     const custom = asString(raw[stage]);
     if (custom) result[stage] = custom;
+  }
+  return result;
+}
+
+function parseStageAccess(raw: unknown): Record<Stage, StageAccess> {
+  const result: Record<Stage, StageAccess> = { ...DEFAULT_STAGE_ACCESS };
+  if (!isRecord(raw)) return result;
+
+  for (const stage of Object.keys(result) as Stage[]) {
+    const val = raw[stage];
+    if (val === "readonly" || val === "write") {
+      result[stage] = val;
+    }
   }
   return result;
 }
@@ -86,7 +106,7 @@ function parseProfiles(raw: unknown): Record<string, ProfileSections> {
   return result;
 }
 
-export const DEFAULT_CONFIRM_BEFORE: readonly string[] = ["start", "implement"];
+export const DEFAULT_CONFIRM_BEFORE: readonly string[] = ["implement", "test"];
 
 function parseConfirmBefore(raw: unknown): readonly string[] {
   if (raw === undefined) return DEFAULT_CONFIRM_BEFORE;
@@ -110,6 +130,10 @@ export function parseOptions(raw: PluginOptions | undefined): KitOptions {
   const defaultPipeline = workflows[requestedDefault] ? requestedDefault : "feature";
 
   return {
+    agentId: asString(obj.agentId) ?? "swe-agent",
+    autoStartOnAgentPrompt: asBoolean(obj.autoStartOnAgentPrompt, true),
+    scopeToAgent: asBoolean(obj.scopeToAgent, true),
+    setDefaultAgent: asBoolean(obj.setDefaultAgent, false),
     registerBundledSkills: asBoolean(obj.registerBundledSkills, true),
     overrideExistingSkills: asBoolean(obj.overrideExistingSkills, false),
     autoInjectContext: asBoolean(obj.autoInjectContext, true),
@@ -119,6 +143,7 @@ export function parseOptions(raw: PluginOptions | undefined): KitOptions {
     confirmBefore: parseConfirmBefore(obj.confirmBefore),
     orchestratorSkill: asString(obj.orchestratorSkill) ?? DEFAULT_ORCHESTRATOR_SKILL,
     stageSkills: parseStageSkills(obj.skills),
+    stageAccess: parseStageAccess(obj.stageAccess),
     workflows,
     profiles: parseProfiles(obj.profiles),
     verifyCommands: asStringArray(obj.verifyCommands),
