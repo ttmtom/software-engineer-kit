@@ -17,9 +17,9 @@
     "README.md"
   ],
   "scripts": {
-    "setup": "node --experimental-strip-types scripts/setup.ts",
+    "setup": "node scripts/setup.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --experimental-strip-types --test test/**/*.test.ts"
+    "test": "node --test test/**/*.test.ts"
   },
   "dependencies": {
     "@opencode/plugin": "^2.3.2"
