@@ -3,7 +3,7 @@ import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync}
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import {checkToolAllowedForStage} from "../src/hooks";
+import {checkToolAllowedForStage} from "../src/hooks/index.ts";
 import {
   detectProfiles,
   isWriteStage,
@@ -11,7 +11,7 @@ import {
   loadProfileRegistry,
   parseOptions,
   parseSkillMarkdown
-} from "../src";
+} from "../src/index.ts";
 import {runSetup} from "../scripts/setup.ts";
 
 test("loadBundledSkills loads all 7 core swe skills", () => {
