@@ -150,6 +150,11 @@ export async function registerHooks(
             delete event.tools[toolName];
           }
         }
+        if (options.scopeToAgent && state.status === "awaiting_approval") {
+          for (const toolName of GATE_BLOCKED_TOOLS) {
+            delete event.tools[toolName];
+          }
+        }
       }),
     );
   }
