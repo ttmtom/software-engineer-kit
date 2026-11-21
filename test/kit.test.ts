@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import {checkToolAllowedForStage} from "../src/hooks";
 import {
+  BUILTIN_PIPELINES,
   detectProfiles,
   isWriteStage,
   loadBundledSkills,
@@ -133,4 +134,14 @@ test("setup script runs dry-run and project install successfully", async () => {
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });
   }
+});
+
+test("refactor pipeline is correctly defined", () => {
+  assert.deepEqual(BUILTIN_PIPELINES.refactor, [
+    "research",
+    "architecture",
+    "implement",
+    "test",
+    "review",
+  ]);
 });

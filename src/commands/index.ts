@@ -1,6 +1,6 @@
-import { execFileSync } from "node:child_process";
-import type { PluginContext, Registration } from "../types.ts";
-import type { KitOptions } from "../options.ts";
+import {execFileSync} from "node:child_process";
+import type {PluginContext, Registration} from "../types.ts";
+import type {KitOptions} from "../options.ts";
 import {
   detectProfiles,
   isKnownProfile,
@@ -8,7 +8,7 @@ import {
   normalizeProfiles,
   type ProfileRegistry,
 } from "../skills/profiles.ts";
-import { getPipelineStages, type Stage } from "../workflows/pipelines.ts";
+import {getPipelineStages, type Stage} from "../workflows/pipelines.ts";
 import {
   createInitialWorkflowState,
   createPendingGate,
@@ -311,6 +311,22 @@ export async function registerCommands(
           prompt,
           delivery,
           pipeline: "bugfix",
+        });
+      },
+    });
+
+    editor.add({
+      name: "swe-refactor",
+      description: "Start the refactor pipeline (research -> architecture -> implement -> test -> review)",
+      execute: async ({sessionID, prompt, delivery}) => {
+        await startPipelineWorkflow({
+          ctx,
+          options,
+          registry,
+          sessionID,
+          prompt,
+          delivery,
+          pipeline: "refactor",
         });
       },
     });

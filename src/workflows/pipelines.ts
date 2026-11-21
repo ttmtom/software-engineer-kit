@@ -39,7 +39,7 @@ export const OVERLAY_STAGES: ReadonlySet<Stage> = new Set<Stage>([
   "review",
 ]);
 
-export type BuiltinPipelineName = "feature" | "bugfix" | "quick" | "review";
+export type BuiltinPipelineName = "feature" | "bugfix" | "quick" | "review" | "refactor";
 
 export const DEFAULT_STAGE_SKILLS: Readonly<Record<Stage, string>> = {
   research: "swe-researcher",
@@ -57,6 +57,7 @@ export const BUILTIN_PIPELINES: Readonly<Record<BuiltinPipelineName, readonly St
   bugfix: ["research", "plan", "implement", "test", "review"],
   quick: ["research", "implement", "test"],
   review: ["review"],
+  refactor: ["research", "architecture", "implement", "test", "review"],
 };
 
 export function isStage(value: string): value is Stage {
