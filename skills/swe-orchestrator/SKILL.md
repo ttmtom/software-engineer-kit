@@ -20,6 +20,18 @@ You are coordinating a structured engineering workflow powered by `software-engi
 - `test` -> `swe-tester`
 - `review` -> `swe-reviewer`
 
+## Specialist Skills (Cross-Cutting)
+
+Load these bundled skills alongside a stage skill when the task involves documentation, security, or performance (while
+still obeying the current stage's `readonly` vs `write` access):
+
+- `swe-documenter` — READMEs, changelogs, API docs, and doc-vs-code verification (`implement` for writes; `research`/
+  `review` for audits)
+- `swe-security` — OWASP checklist, STRIDE threat modeling, and secrets scanning (`research`/`architecture`/`review` for
+  audits; `implement`/`test` for fixes)
+- `swe-performance` — profiling guidance, benchmark design, and optimization patterns (`research`/`architecture`/
+  `review` for analysis; `implement`/`test` for benchmarks/optimizations)
+
 ## Rules
 - Never bypass `awaiting_approval` gates; wait for the user's explicit confirmation.
 - Verify each stage records its artifact before advancing.

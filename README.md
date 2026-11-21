@@ -42,6 +42,16 @@ Four commands are also available as shortcuts:
 - **Read-only vs Write**: File modification tools (`edit`, `write`, `patch`) are strictly blocked during `research`, `architecture`, `plan`, and `review` stages.
 - **Confirmation Gates**: Entering `implement` or `test` pauses at `awaiting_approval`. Present the plan, wait for user confirmation, and call `swe_workflow_approve` before executing writes.
 
+### Specialist Skills
+
+In addition to the stage skills above, three cross-cutting specialist skills are bundled and automatically registered:
+
+| Skill ID          | Purpose                                                                      | Typical Stages                                            |
+|-------------------|------------------------------------------------------------------------------|-----------------------------------------------------------|
+| `swe-documenter`  | Writes/updates READMEs, changelogs, and API docs verified against source     | `implement`, `review`                                     |
+| `swe-security`    | OWASP Top 10 checklist, STRIDE threat modeling, and secrets scanning         | `research`, `architecture`, `review`                      |
+| `swe-performance` | Profiling guidance, reproducible benchmark design, and optimization patterns | `research`, `architecture`, `implement`, `test`, `review` |
+
 ## Shared Domain & Language Overlays (`skills/profiles/`)
 
 Profiles support **hierarchical path inheritance** (`domain/framework/language`):

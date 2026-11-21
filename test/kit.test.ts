@@ -3,7 +3,7 @@ import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync}
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import {checkToolAllowedForStage} from "../src/hooks/index.ts";
+import {checkToolAllowedForStage} from "../src/hooks";
 import {
   detectProfiles,
   isWriteStage,
@@ -11,22 +11,26 @@ import {
   loadProfileRegistry,
   parseOptions,
   parseSkillMarkdown
-} from "../src/index.ts";
+} from "../src";
 import {runSetup} from "../scripts/setup.ts";
 
-test("loadBundledSkills loads all 7 core swe skills", () => {
+test("loadBundledSkills loads all 10 core and specialist swe skills", () => {
   const skills = loadBundledSkills();
   const ids = skills.map((s) => s.id);
   assert.deepEqual(ids, [
     "swe-architect",
+    "swe-documenter",
     "swe-implementer",
     "swe-orchestrator",
+    "swe-performance",
     "swe-planner",
     "swe-researcher",
     "swe-reviewer",
+    "swe-security",
     "swe-tester",
   ]);
   for (const skill of skills) {
+    assert.equal(skill.name, skill.id);
     assert.ok(skill.description && skill.description.length > 10);
     assert.ok(skill.content.length > 20);
   }
