@@ -20,7 +20,7 @@ export function getPackageSkillsRoot(): string {
 
 export function parseSkillMarkdown(raw: string, fallbackId: string, filePath: string): ParsedSkillFile {
   const normalized = raw.replace(/\r\n/g, "\n");
-  const match = normalized.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+  const match = normalized.match(/^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/);
 
   let name = fallbackId;
   let description: string | undefined;
@@ -107,9 +107,17 @@ export function registerBundledSkillsInEditor(
       ...(skill.autoinvoke !== undefined ? { autoinvoke: skill.autoinvoke } : {}),
     };
 
-    if (editor.get(skill.id)) {
+    const existing = editor.get(skill.id);
+    if (existing) {
       editor.remove(skill.id);
     }
-    editor.add(info);
+    try {
+      editor.add(info);
+    } catch (err) {
+      if (existing) {
+        editor.add(existing);
+      }
+      throw err;
+    }
   }
 }

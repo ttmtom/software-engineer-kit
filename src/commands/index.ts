@@ -345,7 +345,9 @@ export async function registerCommands(
         const candidateFiles =
           gitTarget.changedFiles.length > 0
             ? gitTarget.changedFiles
-            : (existing?.touchedFiles ?? existing?.research?.files);
+            : (existing?.touchedFiles && existing.touchedFiles.length > 0
+                ? existing.touchedFiles
+                : existing?.research?.files);
 
         const profiles =
           parsed.profiles.length > 0

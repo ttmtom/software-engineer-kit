@@ -90,9 +90,19 @@ export async function getWorkflowState(
   const raw = await storage.get(workflowStorageKey(sessionID));
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
   const candidate = raw as Record<string, unknown>;
+
+  if (
+    typeof candidate.sessionID !== "string" ||
+    typeof candidate.pipeline !== "string" ||
+    typeof candidate.stage !== "string" ||
+    (candidate.status !== "active" && candidate.status !== "awaiting_approval")
+  ) {
+    return undefined;
+  }
+
   return {
     ...(candidate as unknown as WorkflowState),
-    status: candidate.status === "awaiting_approval" ? "awaiting_approval" : "active",
+    status: candidate.status,
     approvedGates: Array.isArray(candidate.approvedGates)
       ? candidate.approvedGates.filter((x): x is string => typeof x === "string")
       : [],

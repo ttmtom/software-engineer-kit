@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import type { ProfileSections } from "../options.ts";
 import type { OverlayStage } from "../workflows/pipelines.ts";
@@ -141,12 +141,33 @@ export function parseProfileMarkdown(raw: string): ProfileSections {
   return sections;
 }
 
-function collectMarkdownFiles(dir: string, baseDir: string, out: Array<{ key: string; filePath: string }>): void {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+function collectMarkdownFiles(
+  dir: string,
+  baseDir: string,
+  out: Array<{ key: string; filePath: string }>,
+  visited: Set<string>,
+): void {
+  let realDir: string;
+  try {
+    realDir = statSync(dir).ino ? path.resolve(dir) : dir;
+  } catch {
+    return;
+  }
+  if (visited.has(realDir)) return;
+  visited.add(realDir);
+
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
     if (entry.name.startsWith(".")) continue;
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      collectMarkdownFiles(fullPath, baseDir, out);
+      collectMarkdownFiles(fullPath, baseDir, out, visited);
     } else if (entry.isFile() && entry.name.endsWith(".md")) {
       const rel = path.relative(baseDir, fullPath).replace(/\\/g, "/");
       const key = rel.slice(0, -3).toLowerCase();
@@ -163,7 +184,7 @@ export function loadProfileRegistry(
 
   if (existsSync(profilesDir)) {
     const files: Array<{ key: string; filePath: string }> = [];
-    collectMarkdownFiles(profilesDir, profilesDir, files);
+    collectMarkdownFiles(profilesDir, profilesDir, files, new Set());
     files.sort((a, b) => a.key.localeCompare(b.key));
 
     for (const file of files) {

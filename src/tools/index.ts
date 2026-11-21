@@ -32,10 +32,7 @@ import {
   type WorkflowState,
 } from "../workflows/state.ts";
 
-function asStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
-}
+import { asStringArray } from "../utils.ts";
 
 function asTasks(value: unknown): PlanTask[] {
   if (!Array.isArray(value)) return [];

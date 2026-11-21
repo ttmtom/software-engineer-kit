@@ -18,10 +18,15 @@ const GATE_BLOCKED_TOOLS = new Set([
   "patch",
   "apply_patch",
   "swe_verify",
+  "swe.verify",
   "swe_research_save",
+  "swe.research_save",
   "swe_architecture_save",
+  "swe.architecture_save",
   "swe_test_record",
+  "swe.test_record",
   "swe_review_record",
+  "swe.review_record",
 ]);
 
 export function checkToolAllowedDuringGate(

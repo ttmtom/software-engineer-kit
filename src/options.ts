@@ -37,10 +37,7 @@ function asBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
 
-function asStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
-}
+import { asStringArray } from "./utils.ts";
 
 function parseStageSkills(raw: unknown): Record<Stage, string> {
   const result: Record<Stage, string> = { ...DEFAULT_STAGE_SKILLS };
