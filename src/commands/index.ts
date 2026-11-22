@@ -227,6 +227,7 @@ async function startPipelineWorkflow(input: {
     stage: firstStage,
     goal: parsed.text,
     profiles,
+    ...(parsed.profiles.length > 0 ? {profilesLocked: true} : {}),
     status: startGate ? "awaiting_approval" : "active",
     ...(startGate
       ? {
@@ -243,6 +244,9 @@ async function startPipelineWorkflow(input: {
 
   const orchestratorNote = await resolveSkillNote(ctx, options.orchestratorSkill);
   const firstStageSkill = options.stageSkills[firstStage];
+  const isFirstStageIsolated =
+    (firstStage === "research" || firstStage === "review") &&
+    options.isolateStages.includes(firstStage);
 
   await ctx.session.prompt({
     ...prompt,
@@ -252,11 +256,11 @@ async function startPipelineWorkflow(input: {
       ? [
           `Draft an SWE orchestration plan and ask the user for approval before starting.`,
           `- Pipeline: \`${pipeline}\` (${stages.join(" -> ")})`,
-          `- First stage after approval: \`${firstStage}\` (mapped skill: \`${firstStageSkill}\`)`,
+        `- First stage after approval: \`${firstStage}\` (${isFirstStageIsolated ? `sub-agent \`${options.subagentIds[firstStage]}\`` : `skill \`${firstStageSkill}\``})`,
           `- Detected profiles: ${profiles.length > 0 ? profiles.join(", ") : "none"}`,
           `- Confirmation gates configured before: ${options.confirmBefore.join(", ") || "none"}`,
           `- ${orchestratorNote}`,
-          `- DO NOT start \`${firstStage}\` or edit files yet. Present the proposed pipeline, profiles, and high-level plan, then wait for the user's approval.`,
+        `- DO NOT start \`${firstStage}\`, load stage skills yet, or edit files. Present the proposed pipeline, profiles, and high-level plan, then wait for the user's approval.`,
           parsed.text ? `\nTask:\n${parsed.text}` : "",
         ]
           .filter(Boolean)
@@ -267,7 +271,9 @@ async function startPipelineWorkflow(input: {
           `- Starting stage: \`${firstStage}\` (mapped skill: \`${firstStageSkill}\`)`,
           `- Active profiles: ${profiles.length > 0 ? profiles.join(", ") : "auto/none"}`,
           `- ${orchestratorNote}`,
-          `- Also load \`${firstStageSkill}\` for stage 1, record its artifact, and advance with \`swe_workflow_set\`.`,
+        isFirstStageIsolated
+          ? `- Delegate \`${firstStage}\` to sub-agent \`${options.subagentIds[firstStage]}\` (do not load \`${firstStageSkill}\` in parent), inspect saved artifact via \`swe_workflow_get\`, and advance with \`swe_workflow_set\`.`
+          : `- Load \`${firstStageSkill}\` for stage 1, record its artifact, and advance with \`swe_workflow_set\`.`,
           parsed.text ? `\nTask:\n${parsed.text}` : "",
         ]
           .filter(Boolean)
@@ -414,6 +420,7 @@ export async function registerCommands(
           goal,
           reviewTarget: reviewTargetLabel,
           profiles,
+          ...(parsed.profiles.length > 0 ? {profilesLocked: true} : {}),
         });
 
         const reviewSkill = options.stageSkills.review;

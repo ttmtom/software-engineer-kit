@@ -32,6 +32,18 @@ still obeying the current stage's `readonly` vs `write` access):
 - `swe-performance` — profiling guidance, benchmark design, and optimization patterns (`research`/`architecture`/
   `review` for analysis; `implement`/`test` for benchmarks/optimizations)
 
+## Pipeline Sizing & Token Discipline
+
+- **Right-size the pipeline:** Before starting `architecture` (or right after `research`), downgrade small/single-module
+  tasks via `swe_workflow_set({ pipeline: "quick" })` (`research -> implement -> test`) or
+  `swe_workflow_set({ pipeline: "bugfix" })` (`research -> plan -> implement -> test -> review`) when a full
+  architecture spec is unnecessary.
+- **On-demand skills & profiles:** Load only the skill needed for the active non-delegated stage (never load
+  `swe-researcher`/`swe-reviewer` in the parent when delegated). Set `PlanTask.profiles` on tasks so `implement`/`test`
+  overlays stay scoped to the active task, and prune irrelevant workflow profiles via `swe_workflow_set({ profiles })`.
+- **Concise artifacts:** Keep `swe_research_save`, `swe_architecture_save`, and task titles/criteria brief and
+  high-signal; use `swe_workflow_get({ section })` to inspect specific sections on demand.
+
 ## Rules
 - Never bypass `awaiting_approval` gates; wait for the user's explicit confirmation.
 - Verify each stage records its artifact before advancing (`strictTransitions` blocks skipping ahead without required

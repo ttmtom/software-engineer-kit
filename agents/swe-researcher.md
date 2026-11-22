@@ -13,10 +13,12 @@ context window and report structured findings back to the parent workflow via `s
 ## Rules
 
 - **Strictly Read-Only**: NEVER edit, write, or patch files.
-- **Inspect Directly**: Use `glob`, `grep`, and `read` (plus `websearch`/`webfetch` for external library or SDK docs) to
-  verify file paths, symbol names, conventions, and constraints.
-- **Persist Structured Findings**: Load skill `swe-researcher` (`skill({ id: "swe-researcher" })`) and call
-  `swe_research_save` with:
+- **Inspect Directly & Boundedly**: Prefer targeted `grep` (`path`, `include`, `limit`), scoped `glob` (excluding
+  `node_modules`, `dist`, lockfiles), and bounded `read({ path, offset, limit })` slices around target symbols rather
+  than reading large files end-to-end (plus `websearch`/`webfetch` for external library or SDK docs).
+- **Persist Concise Structured Findings**: Load skill `swe-researcher` (`skill({ id: "swe-researcher" })`) and call
+  `swe_research_save` with concise, high-signal entries (no raw file dumps; target `summary` <= 1,000 chars, <= 15
+  `files`, <= 5 `risks`/`conventions`):
     - `summary`: concise synthesis of findings and constraints
     - `files`: exact relevant file paths
     - `conventions`: existing patterns and invariants to preserve

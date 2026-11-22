@@ -19,13 +19,15 @@ import {
   parseOptions,
   parseSkillMarkdown,
   renderSubagentWorkflowContext,
+  renderWorkflowContext,
   resolveStartGate,
   resolveWorkflowSessionID,
   RETRY_LIMIT_GATE,
   saveWorkflowState,
   validateForwardTransition,
 } from "../src";
-import type {StorageDomain} from "../src/types.ts";
+import {registerTools, type ToolsContext} from "../src/tools";
+import type {PluginContext, StorageDomain} from "../src/types.ts";
 
 import {runSetup} from "../scripts/setup.ts";
 
@@ -479,4 +481,239 @@ test("checkToolAllowedForDelegation enforces subagent delegation only when subag
     ).allowed,
     true,
   );
+});
+
+test("detectProfiles avoids false positives when task files and generic wording are provided", () => {
+  const tmpDir = mkdtempSync(path.join(os.tmpdir(), "kit-precision-"));
+  try {
+    mkdirSync(path.join(tmpDir, ".github", "workflows"), {recursive: true});
+    writeFileSync(path.join(tmpDir, ".github", "workflows", "ci.yml"), "name: CI\n");
+    writeFileSync(path.join(tmpDir, "Dockerfile"), "FROM node:22\n");
+    mkdirSync(path.join(tmpDir, "migrations"));
+    writeFileSync(path.join(tmpDir, "tsconfig.json"), "{}");
+    writeFileSync(
+      path.join(tmpDir, "package.json"),
+      JSON.stringify({devDependencies: {typescript: "^5.7.0"}}),
+    );
+    mkdirSync(path.join(tmpDir, "web"));
+    writeFileSync(
+      path.join(tmpDir, "web", "package.json"),
+      JSON.stringify({dependencies: {react: "^19.0.0"}}),
+    );
+
+    const registry = loadProfileRegistry();
+    const detected = detectProfiles({
+      promptText: "Optimize workflow pipeline, research context paging, JSON schema, and architecture components",
+      files: ["src/workflows/state.ts", "src/skills/profiles.ts"],
+      directory: tmpDir,
+      registry,
+    });
+
+    assert.equal(detected.includes("devops"), false);
+    assert.equal(detected.includes("sql"), false);
+    assert.equal(detected.includes("backend/golang"), false);
+    assert.equal(detected.includes("frontend/react/typescript"), false);
+
+    const sqlFilesDetected = detectProfiles({
+      promptText: "Add users table migration",
+      files: ["migrations/001_users.sql"],
+      directory: tmpDir,
+      registry,
+    });
+    assert.deepEqual(sqlFilesDetected, ["sql"]);
+  } finally {
+    rmSync(tmpDir, {recursive: true, force: true});
+  }
+});
+
+test("renderWorkflowContext bounds fields, collapses done tasks, omits research in later stages, and scopes overlays to active task", () => {
+  const registry = loadProfileRegistry();
+  const options = parseOptions({});
+  const longGoal = "G".repeat(600);
+  const manyFiles = Array.from({length: 20}, (_, i) => `src/file-${i}.ts`);
+
+  const researchState = {
+    ...createInitialWorkflowState({
+      sessionID: "ses-render-1",
+      pipeline: "feature",
+      stage: "research",
+      goal: longGoal,
+      profiles: ["backend/typescript"],
+    }),
+    research: {
+      summary: "R".repeat(1500),
+      files: manyFiles,
+      conventions: [],
+      externalRefs: [],
+      risks: ["r1", "r2", "r3", "r4", "r5", "r6"],
+    },
+  };
+
+  const researchRendered = renderWorkflowContext({state: researchState, options, registry});
+  assert.ok(researchRendered.includes("## Saved Research"));
+  assert.ok(researchRendered.includes("... (+5 more)"));
+  assert.ok(researchRendered.includes("... (+1 more)"));
+  assert.equal(researchRendered.includes(longGoal), false);
+
+  const implementState = {
+    ...researchState,
+    stage: "implement" as const,
+    profiles: ["backend/typescript", "frontend/react/typescript", "devops"],
+    architecture: {
+      summary: "Arch summary",
+      components: [],
+      contracts: ["Contract 1"],
+      dataAndMigrations: [],
+      tradeOffs: [],
+      nonGoals: [],
+    },
+    tasks: [
+      {id: "T1", title: "Done task", status: "done" as const, profiles: ["devops"]},
+      {id: "T2", title: "Active TS task", status: "in_progress" as const, profiles: ["backend/typescript"]},
+      {id: "T3", title: "Pending React task", status: "pending" as const, profiles: ["frontend/react/typescript"]},
+    ],
+  };
+
+  const implementRendered = renderWorkflowContext({state: implementState, options, registry});
+  assert.equal(implementRendered.includes("## Saved Research"), false);
+  assert.ok(implementRendered.includes("Done (1): T1"));
+  assert.equal(implementRendered.includes("Done task"), false);
+  assert.ok(implementRendered.includes("### Profile: backend/typescript (implement)"));
+  assert.equal(implementRendered.includes("### Profile: frontend/react/typescript (implement)"), false);
+  assert.equal(implementRendered.includes("### Profile: devops (implement)"), false);
+});
+
+test("swe_* tools re-evaluate profiles cleanly, return compact JSON, support section filtering, and tail-truncate verify output at 16KB", async () => {
+  const storage = createMemoryStorage();
+  const tmpDir = mkdtempSync(path.join(os.tmpdir(), "kit-tools-"));
+  try {
+    mkdirSync(path.join(tmpDir, ".github", "workflows"), {recursive: true});
+    writeFileSync(path.join(tmpDir, "package.json"), JSON.stringify({
+      dependencies: {express: "^4.0.0"},
+      devDependencies: {typescript: "^5.7.0"}
+    }));
+
+    type ToolEditorArg = Parameters<Parameters<PluginContext["tool"]["transform"]>[0]>[0];
+    type ToolAddArg = Parameters<ToolEditorArg["add"]>[0];
+    const registered = new Map<string, ToolAddArg>();
+    const asText = (content: unknown): string => {
+      assert.equal(typeof content, "string");
+      return String(content);
+    };
+
+    const mockCtx: ToolsContext = {
+      storage,
+      location: {directory: tmpDir},
+      permission: {
+        async assert() {
+        }
+      },
+      tool: {
+        async transform(fn) {
+          fn({
+            namespace() {
+            },
+            add(tool: ToolAddArg) {
+              registered.set(tool.name, tool);
+            },
+            get() {
+              return undefined;
+            },
+            list() {
+              return [];
+            },
+            remove() {
+            },
+          } as unknown as ToolEditorArg);
+          return {
+            async dispose() {
+            }
+          };
+        },
+      },
+    };
+
+    const options = parseOptions({});
+    const registry = loadProfileRegistry();
+    await registerTools(mockCtx, options, registry);
+
+    const execContext = {
+      sessionID: "ses-tools",
+      agent: "swe-agent",
+      messageID: "msg-1",
+      id: "call-1",
+      signal: new AbortController().signal,
+      async progress() {
+      },
+    } as unknown as Parameters<ToolAddArg["execute"]>[1];
+
+    // Seed initial state with stale false-positive devops profile
+    await saveWorkflowState(storage, createInitialWorkflowState({
+      sessionID: "ses-tools",
+      pipeline: "feature",
+      stage: "research",
+      goal: "Update backend endpoint",
+      profiles: ["devops", "backend/typescript"],
+    }));
+
+    const researchSave = registered.get("research_save")!;
+    const researchRes = await researchSave.execute({
+      summary: "Found pipeline and sql schema words in prose only",
+      files: ["src/server.ts"],
+      risks: ["Risk A"],
+    }, execContext);
+    const researchText = asText(researchRes.content);
+    assert.equal(researchText.includes("\n"), false);
+    const researchJson = JSON.parse(researchText) as { saved: boolean; profiles: string[]; fileCount: number };
+    assert.equal(researchJson.saved, true);
+    assert.equal(researchJson.fileCount, 1);
+    assert.deepEqual(researchJson.profiles, ["backend/typescript"]);
+
+    const workflowSet = registered.get("workflow_set")!;
+    const setRes = await workflowSet.execute({
+      profiles: ["sql"],
+      advance: true,
+    }, execContext);
+    const setText = asText(setRes.content);
+    assert.equal(setText.includes("\n"), false);
+    const setJson = JSON.parse(setText) as { saved: boolean; stage: string; profiles: string[]; state?: unknown };
+    assert.equal(setJson.saved, true);
+    assert.equal(setJson.stage, "architecture");
+    assert.deepEqual(setJson.profiles, ["sql"]);
+    assert.equal(setJson.state, undefined);
+
+    // Locked profiles should not be overwritten by subsequent research_save
+    const lockedResearchRes = await researchSave.execute({
+      summary: "Re-save research",
+      files: ["src/server.ts"],
+    }, execContext);
+    assert.deepEqual((JSON.parse(asText(lockedResearchRes.content)) as { profiles: string[] }).profiles, ["sql"]);
+
+    const workflowGet = registered.get("workflow_get")!;
+    const summaryRes = await workflowGet.execute({section: "summary"}, execContext);
+    const summaryJson = JSON.parse(asText(summaryRes.content)) as {
+      hasResearch: boolean;
+      research?: unknown;
+      stage: string
+    };
+    assert.equal(summaryJson.hasResearch, true);
+    assert.equal(summaryJson.research, undefined);
+    assert.equal(summaryJson.stage, "architecture");
+
+    const researchOnlyRes = await workflowGet.execute({section: "research"}, execContext);
+    const researchOnlyJson = JSON.parse(asText(researchOnlyRes.content)) as { research: { summary: string } };
+    assert.equal(researchOnlyJson.research.summary, "Re-save research");
+
+    const verify = registered.get("verify")!;
+    const verifyRes = await verify.execute({
+      command: `node -e "process.stdout.write('HEAD_MARKER_' + 'x'.repeat(25000) + '_TAIL_MARKER')"`,
+    }, execContext);
+    const verifyJson = JSON.parse(asText(verifyRes.content)) as { passed: boolean; stdout: string };
+    assert.equal(verifyJson.passed, true);
+    assert.ok(verifyJson.stdout.includes("showing last 16KB"));
+    assert.ok(verifyJson.stdout.includes("_TAIL_MARKER"));
+    assert.equal(verifyJson.stdout.includes("HEAD_MARKER_"), false);
+  } finally {
+    rmSync(tmpDir, {recursive: true, force: true});
+  }
 });

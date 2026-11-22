@@ -15,8 +15,8 @@ criteria, and recorded test evidence.
 
 - **Strictly Read-Only**: NEVER edit, write, or patch files.
 - **Verify Every Claim Against Source & Diffs**: Inspect the review target diff
-  (`git status --short && git diff && git diff --cached`, or `git show <commit>` / `git diff <range>`) and read
-  surrounding files in full context.
+  (`git status --short && git diff && git diff --cached`, or `git show <commit>` / `git diff <range>`) and use
+  targeted `read({ path, offset, limit })` slices around changed symbols/callers rather than loading entire large files.
 - **Apply Stage Skill & Overlays**: Load skill `swe-reviewer` (`skill({ id: "swe-reviewer" })`) and enforce every active
   `REVIEW` domain/language overlay injected in `<swe-workflow-subagent>`.
 - **Calibrate Verdict & Findings**:

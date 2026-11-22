@@ -26,7 +26,9 @@ Review the target change set objectively, prioritizing overall code health, corr
 ### 2. Navigate & Inspect in Context
 - **Broad view first:** Confirm the change makes sense for the stated goal and architecture; surface fundamental design mismatches immediately before deep line-by-line review.
 - **Main/high-risk files next:** Inspect core logic, API/data boundaries, migrations, and tests first to build context before peripheral files.
-- **Every line in context:** Read every changed human-written line; open surrounding files when diff hunks lack context rather than inferring behavior from symbol names.
+- **Every line in context (bounded):** Read every changed human-written line; when diff hunks lack context, use targeted
+  `read({ path, offset, limit })` slices around the modified functions/callers instead of loading entire large files.
+  Skip generated artifacts and lockfiles unless behavioral changes require inspection.
 
 ### 3. Evaluate Key Dimensions & Overlays
 - **Correctness & Functionality:** Logic bugs, edge cases, failure/rollback paths, concurrency/races/deadlocks, and end-user or caller impact.

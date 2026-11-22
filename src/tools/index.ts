@@ -1,6 +1,6 @@
 import {spawn} from "node:child_process";
 import path from "node:path";
-import type {PluginContext, Registration} from "../types.ts";
+import type {PluginContext, Registration, StorageDomain} from "../types.ts";
 import type {KitOptions} from "../options.ts";
 import {detectProfiles, isKnownProfile, normalizeProfiles, type ProfileRegistry,} from "../skills/profiles.ts";
 import {ALL_STAGES, getNextStage, getPipelineStages, isStage, type Stage,} from "../workflows/pipelines.ts";
@@ -20,12 +20,20 @@ import {
   type ReviewFinding,
   type ReviewRecord,
   saveWorkflowState,
+  type SessionLookup,
   type TestRecord,
   validateForwardTransition,
   type WorkflowState,
 } from "../workflows/state.ts";
-
 import {asStringArray} from "../utils.ts";
+
+export interface ToolsContext {
+  readonly storage: Pick<StorageDomain, "get" | "set" | "remove">;
+  readonly session?: SessionLookup;
+  readonly location: { readonly directory: string };
+  readonly permission: Pick<PluginContext["permission"], "assert">;
+  readonly tool: Pick<PluginContext["tool"], "transform">;
+}
 
 function asTasks(value: unknown): PlanTask[] {
   if (!Array.isArray(value)) return [];
@@ -85,23 +93,35 @@ async function runVerificationCommand(input: {
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    const maxBytes = 64 * 1024;
+    const maxBytes = 16 * 1024;
     let stdout = "";
     let stderr = "";
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
     let timedOut = false;
     let aborted = false;
 
-    const append = (current: string, chunk: Buffer): string => {
-      if (current.length >= maxBytes) return current;
-      const next = current + chunk.toString("utf8");
-      return next.length > maxBytes ? `${next.slice(0, maxBytes)}\n...[truncated]` : next;
+    const appendTail = (
+      current: string,
+      chunk: Buffer,
+      wasTruncated: boolean,
+    ): { value: string; truncated: boolean } => {
+      const combined = current + chunk.toString("utf8");
+      if (Buffer.byteLength(combined, "utf8") <= maxBytes && combined.length <= maxBytes) {
+        return {value: combined, truncated: wasTruncated};
+      }
+      return {value: combined.slice(-maxBytes), truncated: true};
     };
 
     child.stdout?.on("data", (chunk: Buffer) => {
-      stdout = append(stdout, chunk);
+      const next = appendTail(stdout, chunk, stdoutTruncated);
+      stdout = next.value;
+      stdoutTruncated = next.truncated;
     });
     child.stderr?.on("data", (chunk: Buffer) => {
-      stderr = append(stderr, chunk);
+      const next = appendTail(stderr, chunk, stderrTruncated);
+      stderr = next.value;
+      stderrTruncated = next.truncated;
     });
 
     const timer = setTimeout(() => {
@@ -129,13 +149,19 @@ async function runVerificationCommand(input: {
     child.on("close", (exitCode) => {
       clearTimeout(timer);
       input.signal.removeEventListener("abort", onAbort);
-      resolve({ exitCode, timedOut, aborted, stdout, stderr });
+      const finalStdout = stdoutTruncated
+        ? `...[truncated earlier output; showing last 16KB]\n${stdout}`
+        : stdout;
+      const finalStderr = stderrTruncated
+        ? `...[truncated earlier output; showing last 16KB]\n${stderr}`
+        : stderr;
+      resolve({exitCode, timedOut, aborted, stdout: finalStdout, stderr: finalStderr});
     });
   });
 }
 
 async function ensureState(
-  ctx: PluginContext,
+  ctx: ToolsContext,
   options: KitOptions,
   registry: ProfileRegistry,
   sessionID: string,
@@ -159,7 +185,7 @@ async function ensureState(
 }
 
 export async function registerTools(
-  ctx: PluginContext,
+  ctx: ToolsContext,
   options: KitOptions,
   registry: ProfileRegistry,
 ): Promise<Registration> {
@@ -172,14 +198,21 @@ export async function registerTools(
     editor.add({
       name: "workflow_get",
       description:
-        "Inspect the current session's SWE workflow stage, pipeline, active profiles, tasks, touched files, and saved artifacts.",
+        "Inspect the current session's SWE workflow stage, pipeline, active profiles, tasks, touched files, and saved artifacts. Use `section` to fetch a compact slice instead of full state.",
       input: {
         type: "object",
-        properties: {},
+        properties: {
+          section: {
+            type: "string",
+            enum: ["all", "summary", "research", "architecture", "plan", "test", "review"],
+          },
+        },
         additionalProperties: false,
       },
       options: { namespace: "swe", codemode: true },
-      execute: async (_input, context) => {
+      execute: async (rawInput, context) => {
+        const input = (rawInput ?? {}) as Record<string, unknown>;
+        const section = typeof input.section === "string" ? input.section : "all";
         const resolved = await resolveWorkflowSessionID({
           storage: ctx.storage,
           session: ctx.session,
@@ -188,30 +221,112 @@ export async function registerTools(
         const state = resolved.state;
         if (!state) {
           return {
-            content: JSON.stringify(
-              {
-                active: false,
-                availablePipelines: options.workflows,
-                stageSkills: options.stageSkills,
-                availableProfiles: Object.keys(registry),
-              },
-              null,
-              2,
-            ),
+            content: JSON.stringify({
+              active: false,
+              availablePipelines: options.workflows,
+              stageSkills: options.stageSkills,
+              availableProfiles: Object.keys(registry),
+            }),
           };
         }
-        return {
-          content: JSON.stringify(
-            {
+
+        const nextStage = getNextStage(state.stage, state.pipeline, options.workflows) ?? null;
+        const mappedSkill = options.stageSkills[state.stage];
+
+        if (section === "summary") {
+          return {
+            content: JSON.stringify({
               active: true,
               isSubagentChild: resolved.isChild,
-              state,
-              nextStage: getNextStage(state.stage, state.pipeline, options.workflows) ?? null,
-              mappedSkill: options.stageSkills[state.stage],
-            },
-            null,
-            2,
-          ),
+              sessionID: state.sessionID,
+              pipeline: state.pipeline,
+              stage: state.stage,
+              status: state.status,
+              nextStage,
+              mappedSkill,
+              goal: state.goal,
+              profiles: state.profiles,
+              approvedGates: state.approvedGates,
+              fixIterations: state.fixIterations,
+              completed: Boolean(state.completed),
+              ...(state.pendingGate ? {pendingGate: state.pendingGate} : {}),
+              hasResearch: Boolean(state.research),
+              hasArchitecture: Boolean(state.architecture),
+              taskCounts: {
+                total: state.tasks.length,
+                done: state.tasks.filter((t) => t.status === "done").length,
+                inProgress: state.tasks.filter((t) => t.status === "in_progress").length,
+                pending: state.tasks.filter((t) => t.status === "pending").length,
+              },
+              touchedFilesCount: state.touchedFiles.length,
+              testStatus: state.testResult?.status ?? null,
+              reviewVerdict: state.reviewResult?.verdict ?? null,
+            }),
+          };
+        }
+
+        if (section === "research") {
+          return {
+            content: JSON.stringify({
+              active: true,
+              stage: state.stage,
+              research: state.research ?? null,
+            }),
+          };
+        }
+
+        if (section === "architecture") {
+          return {
+            content: JSON.stringify({
+              active: true,
+              stage: state.stage,
+              architecture: state.architecture ?? null,
+            }),
+          };
+        }
+
+        if (section === "plan") {
+          return {
+            content: JSON.stringify({
+              active: true,
+              stage: state.stage,
+              tasks: state.tasks,
+              acceptanceCriteria: state.acceptanceCriteria,
+            }),
+          };
+        }
+
+        if (section === "test") {
+          return {
+            content: JSON.stringify({
+              active: true,
+              stage: state.stage,
+              touchedFiles: state.touchedFiles,
+              testResult: state.testResult ?? null,
+            }),
+          };
+        }
+
+        if (section === "review") {
+          return {
+            content: JSON.stringify({
+              active: true,
+              stage: state.stage,
+              reviewTarget: state.reviewTarget ?? null,
+              touchedFiles: state.touchedFiles,
+              reviewResult: state.reviewResult ?? null,
+            }),
+          };
+        }
+
+        return {
+          content: JSON.stringify({
+            active: true,
+            isSubagentChild: resolved.isChild,
+            state,
+            nextStage,
+            mappedSkill,
+          }),
         };
       },
     });
@@ -268,18 +383,19 @@ export async function registerTools(
           requestedStage = getNextStage(current.stage, pipeline, options.workflows);
         }
 
-        const profiles =
-          input.profiles !== undefined
-            ? normalizeProfiles(asStringArray(input.profiles)).filter((p) =>
-                isKnownProfile(p, registry),
-              )
-            : current.profiles;
+        const hasExplicitProfiles = input.profiles !== undefined;
+        const profiles = hasExplicitProfiles
+          ? normalizeProfiles(asStringArray(input.profiles)).filter((p) =>
+            isKnownProfile(p, registry),
+          )
+          : current.profiles;
 
         const baseUpdated: WorkflowState = {
           ...current,
           pipeline,
           goal: typeof input.goal === "string" ? input.goal : current.goal,
           profiles,
+          ...(hasExplicitProfiles ? {profilesLocked: true} : {}),
           tasks: input.tasks !== undefined ? asTasks(input.tasks) : current.tasks,
           acceptanceCriteria:
             input.acceptanceCriteria !== undefined
@@ -291,14 +407,11 @@ export async function registerTools(
           const transitionCheck = validateForwardTransition(baseUpdated, requestedStage, options);
           if (!transitionCheck.allowed) {
             return {
-              content: JSON.stringify(
-                {
-                  error: transitionCheck.reason,
-                  state: current,
-                },
-                null,
-                2,
-              ),
+              content: JSON.stringify({
+                error: transitionCheck.reason,
+                stage: current.stage,
+                pipeline: current.pipeline,
+              }),
             };
           }
         }
@@ -328,15 +441,18 @@ export async function registerTools(
         }
 
         return {
-          content: JSON.stringify(
-            {
-              state: nextState,
-              mappedSkill: options.stageSkills[nextState.stage],
-              nextStage: getNextStage(nextState.stage, nextState.pipeline, options.workflows) ?? null,
-            },
-            null,
-            2,
-          ),
+          content: JSON.stringify({
+            saved: true,
+            sessionID: nextState.sessionID,
+            pipeline: nextState.pipeline,
+            stage: nextState.stage,
+            status: nextState.status,
+            profiles: nextState.profiles,
+            taskCount: nextState.tasks.length,
+            mappedSkill: options.stageSkills[nextState.stage],
+            nextStage: getNextStage(nextState.stage, nextState.pipeline, options.workflows) ?? null,
+            ...(nextState.pendingGate ? {pendingGate: nextState.pendingGate} : {}),
+          }),
         };
       },
     });
@@ -360,35 +476,37 @@ export async function registerTools(
           return { content: JSON.stringify({ approved: false, error: "No active workflow in this session." }) };
         }
         if (current.status !== "awaiting_approval" || !current.pendingGate) {
-          return { content: JSON.stringify({ approved: true, state: current }) };
+          return {
+            content: JSON.stringify({
+              approved: true,
+              stage: current.stage,
+              status: current.status,
+              approvedGates: current.approvedGates,
+            }),
+          };
         }
         if (!current.pendingGate.userResponded) {
           return {
-            content: JSON.stringify(
-              {
-                approved: false,
-                error:
-                  "Cannot approve gate before the user responds. Present the plan/summary to the user and wait for their reply.",
-                pendingGate: current.pendingGate,
-              },
-              null,
-              2,
-            ),
+            content: JSON.stringify({
+              approved: false,
+              error:
+                "Cannot approve gate before the user responds. Present the plan/summary to the user and wait for their reply.",
+              pendingGate: current.pendingGate,
+            }),
           };
         }
 
         const approvedState = await saveWorkflowState(ctx.storage, applyGateApproval(current));
         return {
-          content: JSON.stringify(
-            {
-              approved: true,
-              note: typeof input.note === "string" ? input.note : undefined,
-              state: approvedState,
-              mappedSkill: options.stageSkills[approvedState.stage],
-            },
-            null,
-            2,
-          ),
+          content: JSON.stringify({
+            approved: true,
+            ...(typeof input.note === "string" ? {note: input.note} : {}),
+            stage: approvedState.stage,
+            status: approvedState.status,
+            approvedGates: approvedState.approvedGates,
+            mappedSkill: options.stageSkills[approvedState.stage],
+            nextStage: getNextStage(approvedState.stage, approvedState.pipeline, options.workflows) ?? null,
+          }),
         };
       },
     });
@@ -429,14 +547,14 @@ export async function registerTools(
         };
 
         let profiles = current.profiles;
-        if (options.autoDetectProfiles) {
+        if (options.autoDetectProfiles && !current.profilesLocked) {
           const detected = detectProfiles({
-            promptText: `${current.goal} ${research.summary}`,
+            promptText: current.goal,
             files,
             directory: ctx.location.directory,
             registry,
           });
-          profiles = normalizeProfiles([...profiles, ...detected]);
+          profiles = normalizeProfiles(detected);
         }
 
         const saved = await saveWorkflowState(ctx.storage, {
@@ -446,16 +564,13 @@ export async function registerTools(
         });
 
         return {
-          content: JSON.stringify(
-            {
-              saved: true,
-              workflowSessionID: saved.sessionID,
-              profiles: saved.profiles,
-              research: saved.research,
-            },
-            null,
-            2,
-          ),
+          content: JSON.stringify({
+            saved: true,
+            workflowSessionID: saved.sessionID,
+            profiles: saved.profiles,
+            fileCount: saved.research?.files.length ?? 0,
+            riskCount: saved.research?.risks.length ?? 0,
+          }),
         };
       },
     });
@@ -495,7 +610,14 @@ export async function registerTools(
           architecture,
         });
 
-        return { content: JSON.stringify({ saved: true, architecture: saved.architecture }, null, 2) };
+        return {
+          content: JSON.stringify({
+            saved: true,
+            stage: saved.stage,
+            componentCount: saved.architecture?.components.length ?? 0,
+            contractCount: saved.architecture?.contracts.length ?? 0,
+          }),
+        };
       },
     });
 
@@ -554,16 +676,12 @@ export async function registerTools(
         });
 
         return {
-          content: JSON.stringify(
-            {
-              command,
-              cwd,
-              passed: result.exitCode === 0 && !result.timedOut && !result.aborted,
-              ...result,
-            },
-            null,
-            2,
-          ),
+          content: JSON.stringify({
+            command,
+            cwd,
+            passed: result.exitCode === 0 && !result.timedOut && !result.aborted,
+            ...result,
+          }),
         };
       },
     });
@@ -598,19 +716,17 @@ export async function registerTools(
         const saved = await saveWorkflowState(ctx.storage, transitionResult.nextState);
 
         return {
-          content: JSON.stringify(
-            {
-              saved: true,
-              testResult: saved.testResult,
-              transition: transitionResult.transition,
-              fixIterations: saved.fixIterations,
-              maxFixIterations: options.maxFixIterations,
-              circuitBreakerTriggered: transitionResult.circuitBreakerTriggered,
-              state: saved,
-            },
-            null,
-            2,
-          ),
+          content: JSON.stringify({
+            saved: true,
+            status: saved.testResult?.status,
+            stage: saved.stage,
+            workflowStatus: saved.status,
+            transition: transitionResult.transition,
+            fixIterations: saved.fixIterations,
+            maxFixIterations: options.maxFixIterations,
+            circuitBreakerTriggered: transitionResult.circuitBreakerTriggered,
+            ...(saved.pendingGate ? {pendingGate: saved.pendingGate} : {}),
+          }),
         };
       },
     });
@@ -663,15 +779,11 @@ export async function registerTools(
           current.testResult?.status !== "passed"
         ) {
           return {
-            content: JSON.stringify(
-              {
-                saved: false,
-                error:
-                  'Cannot record review verdict "approved" when pipeline includes "test" and testResult.status is not "passed". Record passing test evidence via `swe_test_record` or submit "changes_requested".',
-              },
-              null,
-              2,
-            ),
+            content: JSON.stringify({
+              saved: false,
+              error:
+                'Cannot record review verdict "approved" when pipeline includes "test" and testResult.status is not "passed". Record passing test evidence via `swe_test_record` or submit "changes_requested".',
+            }),
           };
         }
 
@@ -679,20 +791,20 @@ export async function registerTools(
         const saved = await saveWorkflowState(ctx.storage, transitionResult.nextState);
 
         return {
-          content: JSON.stringify(
-            {
-              saved: true,
-              workflowSessionID: saved.sessionID,
-              reviewResult: saved.reviewResult,
-              transition: transitionResult.transition,
-              fixIterations: saved.fixIterations,
-              maxFixIterations: options.maxFixIterations,
-              circuitBreakerTriggered: transitionResult.circuitBreakerTriggered,
-              state: saved,
-            },
-            null,
-            2,
-          ),
+          content: JSON.stringify({
+            saved: true,
+            workflowSessionID: saved.sessionID,
+            verdict: saved.reviewResult?.verdict,
+            findingCount: saved.reviewResult?.findings.length ?? 0,
+            stage: saved.stage,
+            workflowStatus: saved.status,
+            completed: Boolean(saved.completed),
+            transition: transitionResult.transition,
+            fixIterations: saved.fixIterations,
+            maxFixIterations: options.maxFixIterations,
+            circuitBreakerTriggered: transitionResult.circuitBreakerTriggered,
+            ...(saved.pendingGate ? {pendingGate: saved.pendingGate} : {}),
+          }),
         };
       },
     });

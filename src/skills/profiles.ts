@@ -1,8 +1,8 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import {existsSync, readdirSync, readFileSync, statSync} from "node:fs";
 import path from "node:path";
-import type { ProfileSections } from "../options.ts";
-import type { OverlayStage } from "../workflows/pipelines.ts";
-import { getPackageSkillsRoot } from "./loader.ts";
+import type {ProfileSections} from "../options.ts";
+import type {OverlayStage} from "../workflows/pipelines.ts";
+import {getPackageSkillsRoot} from "./loader.ts";
 
 export type ProfileRegistry = Readonly<Record<string, ProfileSections>>;
 
@@ -265,6 +265,7 @@ export function detectProfiles(input: {
   const detected = new Set<string>();
   const text = (input.promptText ?? "").toLowerCase();
   const files = input.files ?? [];
+  const hasTaskFiles = files.length > 0;
 
   let hasGo = false;
   let hasTs = false;
@@ -273,41 +274,77 @@ export function detectProfiles(input: {
   let hasBackend = false;
 
   if (input.directory && existsSync(input.directory)) {
-    if (existsSync(path.join(input.directory, "go.mod"))) {
-      hasGo = true;
-      hasBackend = true;
-    }
-    if (existsSync(path.join(input.directory, "tsconfig.json"))) {
-      hasTs = true;
-    }
+    if (!hasTaskFiles) {
+      if (existsSync(path.join(input.directory, "go.mod"))) {
+        hasGo = true;
+        hasBackend = true;
+      }
+      if (existsSync(path.join(input.directory, "tsconfig.json"))) {
+        hasTs = true;
+      }
 
-    for (const relPkg of ["package.json", "web/package.json", "frontend/package.json", "apps/web/package.json"]) {
-      const pkgDir = path.dirname(path.join(input.directory, relPkg));
-      const hints = readPackageHints(path.join(input.directory, relPkg));
-      if (hints.hasTypeScript || existsSync(path.join(pkgDir, "tsconfig.json"))) hasTs = true;
-      if (hints.hasReact) hasReact = true;
-      if (hints.hasFrontendFramework) hasFrontend = true;
-      if (hints.hasBackendFramework) hasBackend = true;
-    }
+      for (const relPkg of ["package.json", "web/package.json", "frontend/package.json", "apps/web/package.json"]) {
+        const pkgDir = path.dirname(path.join(input.directory, relPkg));
+        const hints = readPackageHints(path.join(input.directory, relPkg));
+        if (hints.hasTypeScript || existsSync(path.join(pkgDir, "tsconfig.json"))) hasTs = true;
+        if (hints.hasReact) hasReact = true;
+        if (hints.hasFrontendFramework) hasFrontend = true;
+        if (hints.hasBackendFramework) hasBackend = true;
+      }
 
-    if (
-      existsSync(path.join(input.directory, "Dockerfile")) ||
-      existsSync(path.join(input.directory, "docker-compose.yml")) ||
-      existsSync(path.join(input.directory, "docker-compose.yaml")) ||
-      existsSync(path.join(input.directory, ".github", "workflows"))
-    ) {
-      detected.add("devops");
-    }
-    if (
-      existsSync(path.join(input.directory, "migrations")) ||
-      existsSync(path.join(input.directory, "db", "migrations"))
-    ) {
-      detected.add("sql");
+      if (
+        existsSync(path.join(input.directory, "Dockerfile")) ||
+        existsSync(path.join(input.directory, "docker-compose.yml")) ||
+        existsSync(path.join(input.directory, "docker-compose.yaml")) ||
+        existsSync(path.join(input.directory, ".github", "workflows"))
+      ) {
+        detected.add("devops");
+      }
+      if (
+        existsSync(path.join(input.directory, "migrations")) ||
+        existsSync(path.join(input.directory, "db", "migrations"))
+      ) {
+        detected.add("sql");
+      }
+    } else {
+      const lowerFiles = files.map((f) => f.toLowerCase().replace(/\\/g, "/"));
+      const touchesGo = lowerFiles.some((f) => f.endsWith(".go") || f.endsWith("go.mod") || f.endsWith("go.sum"));
+      const touchesTsOrJs = lowerFiles.some((f) => /\.(ts|tsx|js|jsx|mjs|cjs)$/.test(f));
+      const touchesWebSubdir = (prefix: string) =>
+        lowerFiles.some((f) => f.startsWith(`${prefix}/`) || f.includes(`/${prefix}/`));
+
+      if (touchesGo && existsSync(path.join(input.directory, "go.mod"))) {
+        hasGo = true;
+        hasBackend = true;
+      }
+
+      if (touchesTsOrJs) {
+        if (existsSync(path.join(input.directory, "tsconfig.json"))) {
+          hasTs = true;
+        }
+        const rootHints = readPackageHints(path.join(input.directory, "package.json"));
+        if (rootHints.hasTypeScript) hasTs = true;
+        if (rootHints.hasBackendFramework) hasBackend = true;
+
+        for (const [prefix, relPkg] of [
+          ["web", "web/package.json"],
+          ["frontend", "frontend/package.json"],
+          ["apps/web", "apps/web/package.json"],
+        ] as const) {
+          if (!touchesWebSubdir(prefix)) continue;
+          const pkgDir = path.dirname(path.join(input.directory, relPkg));
+          const hints = readPackageHints(path.join(input.directory, relPkg));
+          if (hints.hasTypeScript || existsSync(path.join(pkgDir, "tsconfig.json"))) hasTs = true;
+          if (hints.hasReact) hasReact = true;
+          if (hints.hasFrontendFramework) hasFrontend = true;
+          if (hints.hasBackendFramework) hasBackend = true;
+        }
+      }
     }
   }
 
   for (const file of files) {
-    const lower = file.toLowerCase();
+    const lower = file.toLowerCase().replace(/\\/g, "/");
     if (lower.endsWith(".go")) {
       hasGo = true;
       hasBackend = true;
@@ -336,7 +373,7 @@ export function detectProfiles(input: {
     }
   }
 
-  if (/\b(go|golang|goroutine|gin|chi|echo|fiber)\b/.test(text)) {
+  if (/\b(golang|go\.mod|goroutine|gin|chi|fiber)\b/.test(text)) {
     hasGo = true;
     hasBackend = true;
   }
@@ -345,16 +382,16 @@ export function detectProfiles(input: {
     hasReact = true;
     hasFrontend = true;
   }
-  if (/\b(frontend|vue|svelte|css|tailwind|ui|component|button|modal|page|a11y)\b/.test(text)) {
+  if (/\b(frontend|vue|svelte|css|tailwind|ui|button|modal|a11y|wcag)\b/.test(text)) {
     hasFrontend = true;
   }
-  if (/\b(backend|endpoint|api|route|handler|controller|middleware|grpc|rest|graphql|webhook|auth)\b/.test(text)) {
+  if (/\b(backend|endpoint|rest api|graphql|grpc|webhook|middleware|controller)\b/.test(text)) {
     hasBackend = true;
   }
-  if (/\b(sql|postgres|postgresql|mysql|sqlite|migration|query|index|schema|table|database|db)\b/.test(text)) {
+  if (/\b(sql|postgres|postgresql|mysql|sqlite|migration|migrations|database|rdbms|db)\b/.test(text)) {
     detected.add("sql");
   }
-  if (/\b(devops|docker|kubernetes|k8s|terraform|helm|ci\/cd|github actions|pipeline|deploy)\b/.test(text)) {
+  if (/\b(devops|docker|dockerfile|docker-compose|kubernetes|k8s|terraform|helm|ci\/cd|github actions)\b/.test(text)) {
     detected.add("devops");
   }
 

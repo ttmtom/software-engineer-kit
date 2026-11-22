@@ -332,9 +332,15 @@ export async function registerHooks(
           }),
         );
       } else if (state && !state.goal && event.prompt.text) {
+        const goal = event.prompt.text;
+        const profiles =
+          options.autoDetectProfiles && !state.profilesLocked
+            ? detectProfiles({promptText: goal, directory: ctx.location.directory, registry})
+            : state.profiles;
         await saveWorkflowState(ctx.storage, {
           ...state,
-          goal: event.prompt.text,
+          goal,
+          profiles,
         });
       }
     }),

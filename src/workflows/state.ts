@@ -71,6 +71,7 @@ export interface WorkflowState {
   readonly goal: string;
   readonly reviewTarget?: string;
   readonly profiles: readonly string[];
+  readonly profilesLocked?: boolean;
   readonly tasks: readonly PlanTask[];
   readonly acceptanceCriteria: readonly string[];
   readonly touchedFiles: readonly string[];
@@ -79,6 +80,37 @@ export interface WorkflowState {
   readonly testResult?: TestRecord;
   readonly reviewResult?: ReviewRecord;
   readonly updatedAt: string;
+}
+
+const MAX_GOAL_CHARS = 400;
+const MAX_RESEARCH_SUMMARY_CHARS = 1000;
+const MAX_RESEARCH_FILES = 15;
+const MAX_RESEARCH_RISKS = 5;
+const MAX_ARCH_SUMMARY_CHARS = 1000;
+const MAX_ARCH_CONTRACTS = 10;
+const MAX_ARCH_MIGRATIONS = 8;
+const MAX_TOUCHED_FILES = 20;
+const MAX_TEST_SUMMARY_CHARS = 600;
+const MAX_REVIEW_SUMMARY_CHARS = 600;
+const MAX_REVIEW_FINDINGS = 10;
+
+export function truncateText(text: string, maxChars: number): string {
+  if (text.length <= maxChars) return text;
+  if (maxChars <= 3) return text.slice(0, Math.max(0, maxChars));
+  return `${text.slice(0, maxChars - 3).trimEnd()}...`;
+}
+
+function takeCapped<T>(items: readonly T[], maxItems: number): {
+  readonly shown: readonly T[];
+  readonly omitted: number
+} {
+  if (items.length <= maxItems) {
+    return {shown: items, omitted: 0};
+  }
+  return {
+    shown: items.slice(0, maxItems),
+    omitted: items.length - maxItems,
+  };
 }
 
 const KEY_PREFIX = "software-engineer-kit/workflow/";
@@ -199,6 +231,7 @@ export function createInitialWorkflowState(input: {
   readonly stage: Stage;
   readonly goal: string;
   readonly profiles?: readonly string[];
+  readonly profilesLocked?: boolean;
   readonly status?: WorkflowStatus;
   readonly pendingGate?: PendingGate;
   readonly approvedGates?: readonly string[];
@@ -214,6 +247,7 @@ export function createInitialWorkflowState(input: {
     fixIterations: input.fixIterations ?? 0,
     goal: input.goal,
     profiles: input.profiles ?? [],
+    ...(input.profilesLocked ? {profilesLocked: true} : {}),
     tasks: [],
     acceptanceCriteria: [],
     touchedFiles: [],
@@ -512,6 +546,26 @@ export async function appendTouchedFiles(
   });
 }
 
+function resolveActiveOverlayProfiles(
+  state: Pick<WorkflowState, "stage" | "profiles" | "tasks">,
+): readonly string[] {
+  if (state.stage === "implement" || state.stage === "test") {
+    const taskProfiles: string[] = [];
+    const seen = new Set<string>();
+    for (const task of state.tasks) {
+      if (task.status !== "in_progress" || !task.profiles || task.profiles.length === 0) continue;
+      for (const p of task.profiles) {
+        if (!seen.has(p)) {
+          seen.add(p);
+          taskProfiles.push(p);
+        }
+      }
+    }
+    if (taskProfiles.length > 0) return taskProfiles;
+  }
+  return state.profiles;
+}
+
 export function renderWorkflowContext(input: {
   readonly state: WorkflowState;
   readonly options: KitOptions;
@@ -523,10 +577,11 @@ export function renderWorkflowContext(input: {
   const nextStage = getNextStage(state.stage, state.pipeline, options.workflows);
   const mappedSkill = options.stageSkills[state.stage];
   const access = options.stageAccess[state.stage] ?? (isWriteStage(state.stage, options.stageAccess) ? "write" : "readonly");
+  const goalText = truncateText(state.goal || "(unspecified)", MAX_GOAL_CHARS);
 
   const lines: string[] = [
     `<swe-workflow pipeline="${state.pipeline}" stage="${state.stage}" access="${access}" status="${state.status}" skill="${mappedSkill}">`,
-    `Goal: ${state.goal || "(unspecified)"}`,
+    `Goal: ${goalText}`,
     `Stage Access: ${access.toUpperCase()} (${access === "readonly" ? "Do NOT edit files" : "File modifications permitted"})`,
     `Pipeline Order: ${stages.join(" -> ")}`,
     `Next Stage: ${nextStage ?? "(final stage)"}`,
@@ -555,40 +610,54 @@ export function renderWorkflowContext(input: {
     lines.push(`Instruction: Follow skill "${mappedSkill}" for the current "${state.stage}" stage.`);
   }
 
-  if (state.research) {
+  const omitResearchForLaterStage =
+    (state.stage === "implement" || state.stage === "test" || state.stage === "review") &&
+    (state.architecture !== undefined || state.tasks.length > 0);
+
+  if (state.research && !omitResearchForLaterStage) {
     lines.push("", "## Saved Research");
-    lines.push(state.research.summary);
+    lines.push(truncateText(state.research.summary, MAX_RESEARCH_SUMMARY_CHARS));
     if (state.research.files.length > 0) {
-      lines.push(`Key Files: ${state.research.files.join(", ")}`);
+      const filesCap = takeCapped(state.research.files, MAX_RESEARCH_FILES);
+      const suffix = filesCap.omitted > 0 ? `, ... (+${filesCap.omitted} more)` : "";
+      lines.push(`Key Files: ${filesCap.shown.join(", ")}${suffix}`);
     }
     if (state.research.risks.length > 0) {
-      lines.push(`Risks: ${state.research.risks.join("; ")}`);
+      const risksCap = takeCapped(state.research.risks, MAX_RESEARCH_RISKS);
+      const suffix = risksCap.omitted > 0 ? `; ... (+${risksCap.omitted} more)` : "";
+      lines.push(`Risks: ${risksCap.shown.join("; ")}${suffix}`);
     }
   }
 
   if (state.architecture) {
     lines.push("", "## Saved Architecture Spec");
-    lines.push(state.architecture.summary);
+    lines.push(truncateText(state.architecture.summary, MAX_ARCH_SUMMARY_CHARS));
     if (state.architecture.contracts.length > 0) {
-      lines.push(`Contracts:\n- ${state.architecture.contracts.join("\n- ")}`);
+      const contractsCap = takeCapped(state.architecture.contracts, MAX_ARCH_CONTRACTS);
+      lines.push(`Contracts:\n- ${contractsCap.shown.join("\n- ")}`);
+      if (contractsCap.omitted > 0) lines.push(`- ... (+${contractsCap.omitted} more)`);
     }
     if (state.architecture.dataAndMigrations.length > 0) {
-      lines.push(`Data/SQL:\n- ${state.architecture.dataAndMigrations.join("\n- ")}`);
+      const dataCap = takeCapped(state.architecture.dataAndMigrations, MAX_ARCH_MIGRATIONS);
+      lines.push(`Data/SQL:\n- ${dataCap.shown.join("\n- ")}`);
+      if (dataCap.omitted > 0) lines.push(`- ... (+${dataCap.omitted} more)`);
     }
   }
 
   if (state.tasks.length > 0 || state.acceptanceCriteria.length > 0) {
     lines.push("", "## Active Plan");
     if (state.tasks.length > 0) {
-      lines.push(
-        "Tasks:\n" +
-          state.tasks
-            .map((t) => {
-              const tags = t.profiles && t.profiles.length > 0 ? ` [${t.profiles.join(", ")}]` : "";
-              return `- [${t.status}] ${t.id}: ${t.title}${tags}`;
-            })
-            .join("\n"),
-      );
+      const doneTasks = state.tasks.filter((t) => t.status === "done");
+      const openTasks = state.tasks.filter((t) => t.status !== "done");
+      const taskLines: string[] = [];
+      if (doneTasks.length > 0) {
+        taskLines.push(`Done (${doneTasks.length}): ${doneTasks.map((t) => t.id).join(", ")}`);
+      }
+      for (const t of openTasks) {
+        const tags = t.profiles && t.profiles.length > 0 ? ` [${t.profiles.join(", ")}]` : "";
+        taskLines.push(`- [${t.status}] ${t.id}: ${t.title}${tags}`);
+      }
+      lines.push("Tasks:\n" + taskLines.join("\n"));
     }
     if (state.acceptanceCriteria.length > 0) {
       lines.push(
@@ -599,30 +668,41 @@ export function renderWorkflowContext(input: {
   }
 
   if (state.touchedFiles.length > 0 && (state.stage === "test" || state.stage === "review")) {
+    const touchedCap = takeCapped(state.touchedFiles, MAX_TOUCHED_FILES);
     lines.push("", `## Touched Files (${state.touchedFiles.length})`);
-    lines.push(state.touchedFiles.map((f) => `- ${f}`).join("\n"));
+    lines.push(touchedCap.shown.map((f) => `- ${f}`).join("\n"));
+    if (touchedCap.omitted > 0) {
+      lines.push(`- ... (+${touchedCap.omitted} more)`);
+    }
   }
 
   if (state.testResult && (state.stage === "review" || (state.stage === "implement" && state.testResult.status === "failed"))) {
     lines.push("", "## Recorded Test Evidence");
     lines.push(`Status: ${state.testResult.status}`);
     lines.push(`Commands: ${state.testResult.commands.join(", ") || "none"}`);
-    lines.push(`Summary: ${state.testResult.summary}`);
+    lines.push(`Summary: ${truncateText(state.testResult.summary, MAX_TEST_SUMMARY_CHARS)}`);
     if (state.testResult.gaps.length > 0) {
-      lines.push(`Gaps: ${state.testResult.gaps.join("; ")}`);
+      const gapsCap = takeCapped(state.testResult.gaps, 5);
+      const suffix = gapsCap.omitted > 0 ? `; ... (+${gapsCap.omitted} more)` : "";
+      lines.push(`Gaps: ${gapsCap.shown.join("; ")}${suffix}`);
     }
   }
 
   if (state.reviewResult && state.reviewResult.verdict === "changes_requested" && state.stage !== "review") {
+    const findingsCap = takeCapped(state.reviewResult.findings, MAX_REVIEW_FINDINGS);
     lines.push("", `## Unresolved Review Findings (${state.reviewResult.findings.length})`);
-    lines.push(state.reviewResult.summary);
-    for (const f of state.reviewResult.findings) {
+    lines.push(truncateText(state.reviewResult.summary, MAX_REVIEW_SUMMARY_CHARS));
+    for (const f of findingsCap.shown) {
       lines.push(`- [${f.severity}] ${f.location}: ${f.message}`);
+    }
+    if (findingsCap.omitted > 0) {
+      lines.push(`- ... (+${findingsCap.omitted} more)`);
     }
   }
 
-  if (state.status === "active" && isOverlayStage(state.stage) && state.profiles.length > 0) {
-    const overlays = renderStageOverlays(state.profiles, state.stage, registry);
+  const overlayProfiles = resolveActiveOverlayProfiles(state);
+  if (state.status === "active" && isOverlayStage(state.stage) && overlayProfiles.length > 0) {
+    const overlays = renderStageOverlays(overlayProfiles, state.stage, registry);
     if (overlays) {
       lines.push("", `## Active ${state.stage.toUpperCase()} Overlays`, overlays);
     }
@@ -640,11 +720,12 @@ export function renderSubagentWorkflowContext(input: {
 }): string {
   const {state, role, options, registry} = input;
   const mappedSkill = options.stageSkills[role];
+  const goalText = truncateText(state.goal || "(unspecified)", MAX_GOAL_CHARS);
 
   if (role === "research") {
     const lines: string[] = [
       `<swe-workflow-subagent role="research" pipeline="${state.pipeline}" access="readonly" skill="${mappedSkill}">`,
-      `Goal: ${state.goal || "(unspecified)"}`,
+      `Goal: ${goalText}`,
       `Stage Access: READONLY (Do NOT edit files)`,
       `Active Profiles: ${state.profiles.length > 0 ? state.profiles.join(", ") : "none"}`,
       `Instruction: Follow skill "${mappedSkill}" and persist findings to the parent workflow via \`swe_research_save\`. Do NOT call \`swe_workflow_set\`.`,
@@ -655,7 +736,7 @@ export function renderSubagentWorkflowContext(input: {
 
   const lines: string[] = [
     `<swe-workflow-subagent role="review" pipeline="${state.pipeline}" access="readonly" skill="${mappedSkill}">`,
-    `Goal: ${state.goal || "(unspecified)"}`,
+    `Goal: ${goalText}`,
     `Stage Access: READONLY (Do NOT edit files)`,
     ...(state.reviewTarget ? [`Review Target: ${state.reviewTarget}`] : []),
     `Active Profiles: ${state.profiles.length > 0 ? state.profiles.join(", ") : "none"}`,
@@ -664,12 +745,16 @@ export function renderSubagentWorkflowContext(input: {
 
   if (state.architecture) {
     lines.push("", "## Architecture Spec");
-    lines.push(state.architecture.summary);
+    lines.push(truncateText(state.architecture.summary, MAX_ARCH_SUMMARY_CHARS));
     if (state.architecture.contracts.length > 0) {
-      lines.push(`Contracts:\n- ${state.architecture.contracts.join("\n- ")}`);
+      const contractsCap = takeCapped(state.architecture.contracts, MAX_ARCH_CONTRACTS);
+      lines.push(`Contracts:\n- ${contractsCap.shown.join("\n- ")}`);
+      if (contractsCap.omitted > 0) lines.push(`- ... (+${contractsCap.omitted} more)`);
     }
     if (state.architecture.dataAndMigrations.length > 0) {
-      lines.push(`Data/SQL:\n- ${state.architecture.dataAndMigrations.join("\n- ")}`);
+      const dataCap = takeCapped(state.architecture.dataAndMigrations, MAX_ARCH_MIGRATIONS);
+      lines.push(`Data/SQL:\n- ${dataCap.shown.join("\n- ")}`);
+      if (dataCap.omitted > 0) lines.push(`- ... (+${dataCap.omitted} more)`);
     }
   }
 
@@ -682,17 +767,23 @@ export function renderSubagentWorkflowContext(input: {
   }
 
   if (state.touchedFiles.length > 0) {
+    const touchedCap = takeCapped(state.touchedFiles, MAX_TOUCHED_FILES);
     lines.push("", `## Touched Files (${state.touchedFiles.length})`);
-    lines.push(state.touchedFiles.map((f) => `- ${f}`).join("\n"));
+    lines.push(touchedCap.shown.map((f) => `- ${f}`).join("\n"));
+    if (touchedCap.omitted > 0) {
+      lines.push(`- ... (+${touchedCap.omitted} more)`);
+    }
   }
 
   if (state.testResult) {
     lines.push("", "## Recorded Test Evidence");
     lines.push(`Status: ${state.testResult.status}`);
     lines.push(`Commands: ${state.testResult.commands.join(", ") || "none"}`);
-    lines.push(`Summary: ${state.testResult.summary}`);
+    lines.push(`Summary: ${truncateText(state.testResult.summary, MAX_TEST_SUMMARY_CHARS)}`);
     if (state.testResult.gaps.length > 0) {
-      lines.push(`Gaps: ${state.testResult.gaps.join("; ")}`);
+      const gapsCap = takeCapped(state.testResult.gaps, 5);
+      const suffix = gapsCap.omitted > 0 ? `; ... (+${gapsCap.omitted} more)` : "";
+      lines.push(`Gaps: ${gapsCap.shown.join("; ")}${suffix}`);
     }
   }
 
