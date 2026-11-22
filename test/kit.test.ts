@@ -3,30 +3,30 @@ import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync}
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import {checkToolAllowedForDelegation, checkToolAllowedForStage, shouldAutoStartOnPrompt,} from "../src/hooks";
+import {checkToolAllowedForDelegation, checkToolAllowedForStage, shouldAutoStartOnPrompt,} from "../src/hooks/index.ts";
 import {
-  applyGateApproval,
-  applyReviewRecordTransition,
-  applyTestRecordTransition,
-  BUILTIN_PIPELINES,
-  createInitialWorkflowState,
-  createPendingGate,
-  detectProfiles,
-  getWorkflowState,
-  isWriteStage,
-  loadBundledSkills,
-  loadProfileRegistry,
-  parseOptions,
-  parseSkillMarkdown,
-  renderSubagentWorkflowContext,
-  renderWorkflowContext,
-  resolveStartGate,
-  resolveWorkflowSessionID,
-  RETRY_LIMIT_GATE,
-  saveWorkflowState,
-  validateForwardTransition,
-} from "../src";
-import {registerTools, type ToolsContext} from "../src/tools";
+	applyGateApproval,
+	applyReviewRecordTransition,
+	applyTestRecordTransition,
+	BUILTIN_PIPELINES,
+	createInitialWorkflowState,
+	createPendingGate,
+	detectProfiles,
+	getWorkflowState,
+	isWriteStage,
+	loadBundledSkills,
+	loadProfileRegistry,
+	parseOptions,
+	parseSkillMarkdown,
+	renderSubagentWorkflowContext,
+	renderWorkflowContext,
+	resolveStartGate,
+	resolveWorkflowSessionID,
+	RETRY_LIMIT_GATE,
+	saveWorkflowState,
+	validateForwardTransition,
+} from "../src/index.ts";
+import {registerTools, type ToolsContext} from "../src/tools/index.ts";
 import type {PluginContext, StorageDomain} from "../src/types.ts";
 
 import {runSetup} from "../scripts/setup.ts";

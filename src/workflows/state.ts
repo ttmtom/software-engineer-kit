@@ -728,7 +728,7 @@ export function renderSubagentWorkflowContext(input: {
       `Goal: ${goalText}`,
       `Stage Access: READONLY (Do NOT edit files)`,
       `Active Profiles: ${state.profiles.length > 0 ? state.profiles.join(", ") : "none"}`,
-      `Instruction: Follow skill "${mappedSkill}" and persist findings to the parent workflow via \`swe_research_save\`. Do NOT call \`swe_workflow_set\`.`,
+      `Instruction: Follow skill "${mappedSkill}" and persist findings to the parent workflow via \`swe_research_save\`. In addition to calling \`swe_research_save\`, output your final response containing a valid JSON code block with structure: {"summary": string, "files": string[], "conventions": string[], "externalRefs": string[], "risks": string[]}. Do NOT call \`swe_workflow_set\`.`,
       "</swe-workflow-subagent>",
     ];
     return lines.join("\n");
@@ -740,7 +740,7 @@ export function renderSubagentWorkflowContext(input: {
     `Stage Access: READONLY (Do NOT edit files)`,
     ...(state.reviewTarget ? [`Review Target: ${state.reviewTarget}`] : []),
     `Active Profiles: ${state.profiles.length > 0 ? state.profiles.join(", ") : "none"}`,
-    `Instruction: Perform an objective, isolated code review using skill "${mappedSkill}" and persist the verdict via \`swe_review_record\`. Do NOT call \`swe_workflow_set\`.`,
+    `Instruction: Perform an objective, isolated code review using skill "${mappedSkill}" and persist the verdict via \`swe_review_record\`. In addition to calling \`swe_review_record\`, output your final response containing a valid JSON code block with structure: {"verdict": "approved" | "changes_requested", "summary": string, "findings": [{"severity": "critical" | "major" | "minor" | "nit", "location": string, "message": string}]}. Do NOT call \`swe_workflow_set\`.`,
   ];
 
   if (state.architecture) {
