@@ -1,4 +1,4 @@
-import type { PluginOptions } from "@opencode/plugin";
+import type {PluginOptions} from "@opencode/plugin";
 import {
   BUILTIN_PIPELINES,
   DEFAULT_ORCHESTRATOR_SKILL,
@@ -9,8 +9,18 @@ import {
   type Stage,
   type StageAccess,
 } from "./workflows/pipelines.ts";
+import {asStringArray} from "./utils.ts";
 
 export type ProfileSections = Partial<Record<OverlayStage, string>>;
+
+export type IsolatedStage = "research" | "review";
+
+export const DEFAULT_ISOLATED_STAGES: readonly IsolatedStage[] = ["research", "review"];
+
+export const DEFAULT_SUBAGENT_IDS: Readonly<Record<IsolatedStage, string>> = {
+  research: "swe-researcher",
+  review: "swe-reviewer",
+};
 
 export interface KitOptions {
   readonly agentId: string;
@@ -30,6 +40,10 @@ export interface KitOptions {
   readonly workflows: Readonly<Record<string, readonly Stage[]>>;
   readonly profiles: Readonly<Record<string, ProfileSections>>;
   readonly verifyCommands: readonly string[];
+  readonly isolateStages: readonly IsolatedStage[];
+  readonly subagentIds: Readonly<Record<IsolatedStage, string>>;
+  readonly maxFixIterations: number;
+  readonly strictTransitions: boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -43,8 +57,6 @@ function asString(value: unknown): string | undefined {
 function asBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
-
-import { asStringArray } from "./utils.ts";
 
 function parseStageSkills(raw: unknown): Record<Stage, string> {
   const result: Record<Stage, string> = { ...DEFAULT_STAGE_SKILLS };
@@ -123,6 +135,37 @@ function parseConfirmBefore(raw: unknown): readonly string[] {
   return Array.from(valid);
 }
 
+function parseIsolateStages(raw: unknown): readonly IsolatedStage[] {
+  if (raw === undefined) return DEFAULT_ISOLATED_STAGES;
+  if (raw === "none" || raw === false) return [];
+  if (!Array.isArray(raw)) return DEFAULT_ISOLATED_STAGES;
+
+  const valid = new Set<IsolatedStage>();
+  for (const item of raw) {
+    if (item === "research" || item === "review") {
+      valid.add(item);
+    }
+  }
+  return Array.from(valid);
+}
+
+function parseSubagentIds(raw: unknown): Record<IsolatedStage, string> {
+  const result: Record<IsolatedStage, string> = {...DEFAULT_SUBAGENT_IDS};
+  if (!isRecord(raw)) return result;
+
+  const researchId = asString(raw.research);
+  if (researchId) result.research = researchId;
+  const reviewId = asString(raw.review);
+  if (reviewId) result.review = reviewId;
+  return result;
+}
+
+function parseNonNegativeInt(raw: unknown, fallback: number): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return fallback;
+  const floored = Math.floor(raw);
+  return floored >= 0 ? floored : fallback;
+}
+
 export function parseOptions(raw: PluginOptions | undefined): KitOptions {
   const obj: Record<string, unknown> = isRecord(raw) ? raw : {};
   const workflows = parseWorkflows(obj.workflows);
@@ -147,5 +190,9 @@ export function parseOptions(raw: PluginOptions | undefined): KitOptions {
     workflows,
     profiles: parseProfiles(obj.profiles),
     verifyCommands: asStringArray(obj.verifyCommands),
+    isolateStages: parseIsolateStages(obj.isolateStages),
+    subagentIds: parseSubagentIds(obj.subagents),
+    maxFixIterations: parseNonNegativeInt(obj.maxFixIterations, 3),
+    strictTransitions: asBoolean(obj.strictTransitions, true),
   };
 }

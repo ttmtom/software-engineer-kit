@@ -40,7 +40,15 @@ Four commands are also available as shortcuts:
 | Review | **Readonly** | `swe-reviewer` | `swe_review_record` |
 
 - **Read-only vs Write**: File modification tools (`edit`, `write`, `patch`) are strictly blocked during `research`, `architecture`, `plan`, and `review` stages.
-- **Confirmation Gates**: Entering `implement` or `test` pauses at `awaiting_approval`. Present the plan, wait for user confirmation, and call `swe_workflow_approve` before executing writes.
+- **Isolated Sub-Agents**: `research` and `review` delegate to dedicated `mode: subagent` agents (`swe-researcher`,
+  `swe-reviewer`) with fresh, role-scoped context windows when installed (`isolateStages: ["research", "review"]`).
+- **Bounded Retry Loops & Transition Guards**: `swe_test_record({ status: "failed" })` and
+  `swe_review_record({ verdict: "changes_requested" })` automatically loop back to `implement` up to `maxFixIterations`
+  (default `3`) before triggering a `retry_limit` confirmation gate. Forward stage jumps require prior artifacts/passing
+  tests (`strictTransitions: true`).
+- **Confirmation Gates**: Configured via `confirmBefore` (supports `"start"`, stage names, `"all"`, or `"none"`).
+  Entering a gated stage pauses at `awaiting_approval`. Present the plan, wait for user confirmation, and call
+  `swe_workflow_approve` before proceeding.
 
 ### Specialist Skills
 

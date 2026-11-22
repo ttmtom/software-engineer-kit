@@ -1,38 +1,31 @@
-import { spawn } from "node:child_process";
+import {spawn} from "node:child_process";
 import path from "node:path";
-import type { PluginContext, Registration } from "../types.ts";
-import type { KitOptions } from "../options.ts";
-import {
-  detectProfiles,
-  isKnownProfile,
-  normalizeProfiles,
-  type ProfileRegistry,
-} from "../skills/profiles.ts";
-import {
-  ALL_STAGES,
-  getNextStage,
-  getPipelineStages,
-  isStage,
-  type Stage,
-} from "../workflows/pipelines.ts";
+import type {PluginContext, Registration} from "../types.ts";
+import type {KitOptions} from "../options.ts";
+import {detectProfiles, isKnownProfile, normalizeProfiles, type ProfileRegistry,} from "../skills/profiles.ts";
+import {ALL_STAGES, getNextStage, getPipelineStages, isStage, type Stage,} from "../workflows/pipelines.ts";
 import {
   applyGateApproval,
+  applyReviewRecordTransition,
+  applyTestRecordTransition,
+  type ArchitectureRecord,
   clearWorkflowState,
   createInitialWorkflowState,
   createPendingGate,
   getWorkflowState,
   needsGateConfirmation,
-  saveWorkflowState,
-  type ArchitectureRecord,
   type PlanTask,
   type ResearchRecord,
+  resolveWorkflowSessionID,
   type ReviewFinding,
   type ReviewRecord,
+  saveWorkflowState,
   type TestRecord,
+  validateForwardTransition,
   type WorkflowState,
 } from "../workflows/state.ts";
 
-import { asStringArray } from "../utils.ts";
+import {asStringArray} from "../utils.ts";
 
 function asTasks(value: unknown): PlanTask[] {
   if (!Array.isArray(value)) return [];
@@ -187,7 +180,12 @@ export async function registerTools(
       },
       options: { namespace: "swe", codemode: true },
       execute: async (_input, context) => {
-        const state = await getWorkflowState(ctx.storage, context.sessionID);
+        const resolved = await resolveWorkflowSessionID({
+          storage: ctx.storage,
+          session: ctx.session,
+          sessionID: context.sessionID,
+        });
+        const state = resolved.state;
         if (!state) {
           return {
             content: JSON.stringify(
@@ -206,6 +204,7 @@ export async function registerTools(
           content: JSON.stringify(
             {
               active: true,
+              isSubagentChild: resolved.isChild,
               state,
               nextStage: getNextStage(state.stage, state.pipeline, options.workflows) ?? null,
               mappedSkill: options.stageSkills[state.stage],
@@ -288,6 +287,22 @@ export async function registerTools(
               : current.acceptanceCriteria,
         };
 
+        if (requestedStage && requestedStage !== current.stage) {
+          const transitionCheck = validateForwardTransition(baseUpdated, requestedStage, options);
+          if (!transitionCheck.allowed) {
+            return {
+              content: JSON.stringify(
+                {
+                  error: transitionCheck.reason,
+                  state: current,
+                },
+                null,
+                2,
+              ),
+            };
+          }
+        }
+
         let nextState: WorkflowState;
         if (
           requestedStage &&
@@ -296,6 +311,7 @@ export async function registerTools(
         ) {
           nextState = await saveWorkflowState(ctx.storage, {
             ...baseUpdated,
+            completed: false,
             status: "awaiting_approval",
             pendingGate: createPendingGate({
               gate: requestedStage,
@@ -306,6 +322,7 @@ export async function registerTools(
         } else {
           nextState = await saveWorkflowState(ctx.storage, {
             ...baseUpdated,
+            ...(requestedStage && requestedStage !== current.stage ? {completed: false} : {}),
             stage: requestedStage ?? current.stage,
           });
         }
@@ -395,7 +412,12 @@ export async function registerTools(
       options: { namespace: "swe", codemode: true },
       execute: async (rawInput, context) => {
         const input = (rawInput ?? {}) as Record<string, unknown>;
-        const current = await ensureState(ctx, options, registry, context.sessionID);
+        const resolved = await resolveWorkflowSessionID({
+          storage: ctx.storage,
+          session: ctx.session,
+          sessionID: context.sessionID,
+        });
+        const current = resolved.state ?? (await ensureState(ctx, options, registry, resolved.workflowSessionID));
         const files = asStringArray(input.files);
 
         const research: ResearchRecord = {
@@ -424,7 +446,16 @@ export async function registerTools(
         });
 
         return {
-          content: JSON.stringify({ saved: true, profiles: saved.profiles, research: saved.research }, null, 2),
+          content: JSON.stringify(
+            {
+              saved: true,
+              workflowSessionID: saved.sessionID,
+              profiles: saved.profiles,
+              research: saved.research,
+            },
+            null,
+            2,
+          ),
         };
       },
     });
@@ -563,12 +594,24 @@ export async function registerTools(
           gaps: asStringArray(input.gaps),
         };
 
-        const saved = await saveWorkflowState(ctx.storage, {
-          ...current,
-          testResult,
-        });
+        const transitionResult = applyTestRecordTransition(current, testResult, options);
+        const saved = await saveWorkflowState(ctx.storage, transitionResult.nextState);
 
-        return { content: JSON.stringify({ saved: true, testResult: saved.testResult }, null, 2) };
+        return {
+          content: JSON.stringify(
+            {
+              saved: true,
+              testResult: saved.testResult,
+              transition: transitionResult.transition,
+              fixIterations: saved.fixIterations,
+              maxFixIterations: options.maxFixIterations,
+              circuitBreakerTriggered: transitionResult.circuitBreakerTriggered,
+              state: saved,
+            },
+            null,
+            2,
+          ),
+        };
       },
     });
 
@@ -600,19 +643,57 @@ export async function registerTools(
       options: { namespace: "swe", codemode: true },
       execute: async (rawInput, context) => {
         const input = (rawInput ?? {}) as Record<string, unknown>;
-        const current = await ensureState(ctx, options, registry, context.sessionID);
+        const resolved = await resolveWorkflowSessionID({
+          storage: ctx.storage,
+          session: ctx.session,
+          sessionID: context.sessionID,
+        });
+        const current = resolved.state ?? (await ensureState(ctx, options, registry, resolved.workflowSessionID));
         const reviewResult: ReviewRecord = {
           verdict: input.verdict === "changes_requested" ? "changes_requested" : "approved",
           summary: String(input.summary ?? ""),
           findings: asFindings(input.findings),
         };
 
-        const saved = await saveWorkflowState(ctx.storage, {
-          ...current,
-          reviewResult,
-        });
+        const stages = getPipelineStages(current.pipeline, options.workflows);
+        if (
+          options.strictTransitions &&
+          reviewResult.verdict === "approved" &&
+          stages.includes("test") &&
+          current.testResult?.status !== "passed"
+        ) {
+          return {
+            content: JSON.stringify(
+              {
+                saved: false,
+                error:
+                  'Cannot record review verdict "approved" when pipeline includes "test" and testResult.status is not "passed". Record passing test evidence via `swe_test_record` or submit "changes_requested".',
+              },
+              null,
+              2,
+            ),
+          };
+        }
 
-        return { content: JSON.stringify({ saved: true, reviewResult: saved.reviewResult }, null, 2) };
+        const transitionResult = applyReviewRecordTransition(current, reviewResult, options);
+        const saved = await saveWorkflowState(ctx.storage, transitionResult.nextState);
+
+        return {
+          content: JSON.stringify(
+            {
+              saved: true,
+              workflowSessionID: saved.sessionID,
+              reviewResult: saved.reviewResult,
+              transition: transitionResult.transition,
+              fixIterations: saved.fixIterations,
+              maxFixIterations: options.maxFixIterations,
+              circuitBreakerTriggered: transitionResult.circuitBreakerTriggered,
+              state: saved,
+            },
+            null,
+            2,
+          ),
+        };
       },
     });
   });

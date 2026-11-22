@@ -13,7 +13,7 @@ import {
   createInitialWorkflowState,
   createPendingGate,
   getWorkflowState,
-  needsGateConfirmation,
+  resolveStartGate,
   saveWorkflowState,
 } from "../workflows/state.ts";
 
@@ -220,20 +220,20 @@ async function startPipelineWorkflow(input: {
           })
         : [];
 
-  const requireStartConfirm = needsGateConfirmation(firstStage, { approvedGates: [] }, options);
+  const startGate = resolveStartGate(firstStage, {approvedGates: []}, options);
   const initialState = createInitialWorkflowState({
     sessionID,
     pipeline,
     stage: firstStage,
     goal: parsed.text,
     profiles,
-    status: requireStartConfirm ? "awaiting_approval" : "active",
-    ...(requireStartConfirm
+    status: startGate ? "awaiting_approval" : "active",
+    ...(startGate
       ? {
           pendingGate: createPendingGate({
-            gate: firstStage,
-            targetStage: firstStage,
-            summary: `User approval required before starting "${firstStage}" stage.`,
+            gate: startGate.gate,
+            targetStage: startGate.targetStage,
+            summary: startGate.summary,
           }),
         }
       : {}),
@@ -248,7 +248,7 @@ async function startPipelineWorkflow(input: {
     ...prompt,
     sessionID,
     delivery,
-    text: requireStartConfirm
+    text: startGate
       ? [
           `Draft an SWE orchestration plan and ask the user for approval before starting.`,
           `- Pipeline: \`${pipeline}\` (${stages.join(" -> ")})`,

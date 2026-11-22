@@ -34,5 +34,9 @@ still obeying the current stage's `readonly` vs `write` access):
 
 ## Rules
 - Never bypass `awaiting_approval` gates; wait for the user's explicit confirmation.
-- Verify each stage records its artifact before advancing.
-- If `review` returns `changes_requested`, loop back through `implement` -> `test` -> `review` until approved.
+- Verify each stage records its artifact before advancing (`strictTransitions` blocks skipping ahead without required
+  artifacts or passing tests).
+- Delegate `research` to `swe-researcher` and `review` to `swe-reviewer` via `subagent` when isolated sub-agents are
+  registered.
+- Failed `swe_test_record` or `changes_requested` from `swe_review_record` automatically loops back to `implement` until
+  `maxFixIterations` is exceeded, at which point `retry_limit` pauses for user confirmation.

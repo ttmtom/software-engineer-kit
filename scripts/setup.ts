@@ -1,4 +1,4 @@
-import {existsSync, mkdirSync, readFileSync, rmSync, writeFileSync} from "node:fs";
+import {existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync} from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import {fileURLToPath} from "node:url";
@@ -78,8 +78,10 @@ export async function runSetup(argv: readonly string[] = process.argv.slice(2)):
     : path.join(args.projectDir ?? process.cwd(), ".opencode");
 
   const agentsDir = path.join(targetConfigDir, "agents");
-  const agentDest = path.join(agentsDir, "swe-agent.md");
-  const agentSource = path.join(packageRoot, "agents", "swe-agent.md");
+  const agentsSourceDir = path.join(packageRoot, "agents");
+  const agentFiles = existsSync(agentsSourceDir)
+    ? readdirSync(agentsSourceDir).filter((f) => f.endsWith(".md")).sort()
+    : ["swe-agent.md"];
 
   const configFilePath = args.global
     ? path.join(targetConfigDir, "opencode.jsonc")
@@ -93,9 +95,12 @@ export async function runSetup(argv: readonly string[] = process.argv.slice(2)):
 
   if (args.uninstall) {
     if (!args.dryRun) {
-      if (existsSync(agentDest)) {
-        rmSync(agentDest);
-        console.log(`[swe-kit setup] Removed ${agentDest}`);
+      for (const file of agentFiles) {
+        const agentDest = path.join(agentsDir, file);
+        if (existsSync(agentDest)) {
+          rmSync(agentDest);
+          console.log(`[swe-kit setup] Removed ${agentDest}`);
+        }
       }
       if (existsSync(configFilePath)) {
         const config = loadJsonc(configFilePath);
@@ -122,12 +127,16 @@ export async function runSetup(argv: readonly string[] = process.argv.slice(2)):
   // Install
   if (!args.dryRun) {
     mkdirSync(agentsDir, { recursive: true });
-    if (existsSync(agentSource)) {
-      const agentContent = readFileSync(agentSource, "utf8");
-      writeFileSync(agentDest, agentContent, "utf8");
-      console.log(`[swe-kit setup] Written agent file to ${agentDest}`);
-    } else {
-      console.warn(`[swe-kit setup] Warning: source agent file not found at ${agentSource}`);
+    for (const file of agentFiles) {
+      const agentSource = path.join(agentsSourceDir, file);
+      const agentDest = path.join(agentsDir, file);
+      if (existsSync(agentSource)) {
+        const agentContent = readFileSync(agentSource, "utf8");
+        writeFileSync(agentDest, agentContent, "utf8");
+        console.log(`[swe-kit setup] Written agent file to ${agentDest}`);
+      } else {
+        console.warn(`[swe-kit setup] Warning: source agent file not found at ${agentSource}`);
+      }
     }
 
     const config = loadJsonc(configFilePath);

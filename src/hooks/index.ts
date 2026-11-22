@@ -3,20 +3,26 @@ import type {PluginContext, Registration} from "../types.ts";
 import type {KitOptions} from "../options.ts";
 import type {ProfileRegistry} from "../skills/profiles.ts";
 import {detectProfiles} from "../skills/profiles.ts";
-import {isWriteStage} from "../workflows/pipelines.ts";
+import {getPipelineStages, isWriteStage, type Stage} from "../workflows/pipelines.ts";
 import {
   appendTouchedFiles,
   createInitialWorkflowState,
   createPendingGate,
   getWorkflowState,
   markGateUserResponded,
-  needsGateConfirmation,
+  renderSubagentWorkflowContext,
   renderWorkflowContext,
+  resolveStartGate,
+  resolveWorkflowSessionID,
   saveWorkflowState,
   type WorkflowState,
 } from "../workflows/state.ts";
 
 const FILE_MUTATION_TOOLS = new Set(["edit", "write", "patch", "apply_patch"]);
+
+const RESEARCH_SAVE_TOOLS = new Set(["swe_research_save", "swe.research_save"]);
+const REVIEW_RECORD_TOOLS = new Set(["swe_review_record", "swe.review_record"]);
+const WORKFLOW_SET_TOOLS = new Set(["swe_workflow_set", "swe.workflow_set"]);
 
 const GATE_BLOCKED_TOOLS = new Set([
   "edit",
@@ -73,6 +79,77 @@ export function checkToolAllowedForStage(
   return { allowed: true };
 }
 
+export function getSubagentRoleForAgent(
+  agentId: string,
+  options: Pick<KitOptions, "subagentIds">,
+): "research" | "review" | undefined {
+  if (agentId === options.subagentIds.research) return "research";
+  if (agentId === options.subagentIds.review) return "review";
+  return undefined;
+}
+
+export function checkToolAllowedForDelegation(
+  toolName: string,
+  input: {
+    readonly agent: string;
+    readonly stage: Stage;
+    readonly isChild: boolean;
+    readonly subagentAvailable: boolean;
+  },
+  options: Pick<KitOptions, "agentId" | "isolateStages" | "subagentIds">,
+): { allowed: true } | { allowed: false; reason: string } {
+  if (input.isChild || input.agent !== options.agentId || !input.subagentAvailable) {
+    return {allowed: true};
+  }
+
+  if (
+    input.stage === "research" &&
+    options.isolateStages.includes("research") &&
+    RESEARCH_SAVE_TOOLS.has(toolName)
+  ) {
+    return {
+      allowed: false,
+      reason: `Stage "research" is isolated to sub-agent "${options.subagentIds.research}". Delegate via \`subagent({ agent: "${options.subagentIds.research}", ... })\` so it persists findings cleanly.`,
+    };
+  }
+
+  if (
+    input.stage === "review" &&
+    options.isolateStages.includes("review") &&
+    REVIEW_RECORD_TOOLS.has(toolName)
+  ) {
+    return {
+      allowed: false,
+      reason: `Stage "review" is isolated to sub-agent "${options.subagentIds.review}". Delegate via \`subagent({ agent: "${options.subagentIds.review}", ... })\` for an objective, isolated review.`,
+    };
+  }
+
+  return {allowed: true};
+}
+
+export function shouldAutoStartOnPrompt(input: {
+  readonly session?: { readonly parentID?: string; readonly agent?: string };
+  readonly options: Pick<KitOptions, "agentId" | "autoStartOnAgentPrompt" | "subagentIds">;
+}): boolean {
+  if (!input.options.autoStartOnAgentPrompt) return false;
+  if (input.session?.parentID) return false;
+  const sessionAgent = input.session?.agent;
+  if (sessionAgent) {
+    if (getSubagentRoleForAgent(sessionAgent, input.options)) return false;
+    if (sessionAgent !== input.options.agentId) return false;
+  }
+  return true;
+}
+
+async function isAgentRegistered(ctx: PluginContext, agentId: string): Promise<boolean> {
+  try {
+    const {data: agents} = await ctx.agent.list();
+    return agents.some((a) => a.id === agentId || a.name === agentId);
+  } catch {
+    return false;
+  }
+}
+
 export function extractTouchedFilePaths(toolName: string, input: unknown): string[] {
   if (!FILE_MUTATION_TOOLS.has(toolName)) return [];
   if (!input || typeof input !== "object") return [];
@@ -106,16 +183,47 @@ export async function registerHooks(
   if (options.autoInjectContext) {
     registrations.push(
       await ctx.session.hook("context", async (event) => {
-        let state = await getWorkflowState(ctx.storage, event.sessionID);
+        const subagentRole = getSubagentRoleForAgent(event.agent, options);
+        const resolved = await resolveWorkflowSessionID({
+          storage: ctx.storage,
+          session: ctx.session,
+          sessionID: event.sessionID,
+        });
+
+        if (subagentRole || resolved.isChild) {
+          if (resolved.state) {
+            const role: "research" | "review" =
+              subagentRole ?? (resolved.state.stage === "review" ? "review" : "research");
+            const block = renderSubagentWorkflowContext({
+              state: resolved.state,
+              role,
+              options,
+              registry,
+            });
+            event.system.push({type: "text", text: block});
+          }
+
+          if (options.scopeToAgent) {
+            for (const toolName of FILE_MUTATION_TOOLS) {
+              delete event.tools[toolName];
+            }
+            for (const toolName of WORKFLOW_SET_TOOLS) {
+              delete event.tools[toolName];
+            }
+          }
+          return;
+        }
+
+        let state = resolved.state;
         const isSweAgent = event.agent === options.agentId;
 
         if (!state && options.autoStartOnAgentPrompt && isSweAgent) {
           const pipeline = options.defaultPipeline;
-          const firstStage = "research";
+          const firstStage = getPipelineStages(pipeline, options.workflows)[0] ?? "research";
           const profiles = options.autoDetectProfiles
             ? detectProfiles({ directory: ctx.location.directory, registry })
             : [];
-          const requireGate = needsGateConfirmation(firstStage, { approvedGates: [] }, options);
+          const startGate = resolveStartGate(firstStage, {approvedGates: []}, options);
 
           state = await saveWorkflowState(
             ctx.storage,
@@ -125,13 +233,13 @@ export async function registerHooks(
               stage: firstStage,
               goal: "",
               profiles,
-              status: requireGate ? "awaiting_approval" : "active",
-              ...(requireGate
+              status: startGate ? "awaiting_approval" : "active",
+              ...(startGate
                 ? {
                     pendingGate: createPendingGate({
-                      gate: firstStage,
-                      targetStage: firstStage,
-                      summary: `User approval required before starting "${firstStage}" stage.`,
+                      gate: startGate.gate,
+                      targetStage: startGate.targetStage,
+                      summary: startGate.summary,
                     }),
                   }
                 : {}),
@@ -141,7 +249,20 @@ export async function registerHooks(
 
         if (!state) return;
 
-        const block = renderWorkflowContext({ state, options, registry });
+        let delegatedSubagent: string | undefined;
+        if (
+          state.status === "active" &&
+          isSweAgent &&
+          (state.stage === "research" || state.stage === "review") &&
+          options.isolateStages.includes(state.stage)
+        ) {
+          const candidateId = options.subagentIds[state.stage];
+          if (await isAgentRegistered(ctx, candidateId)) {
+            delegatedSubagent = candidateId;
+          }
+        }
+
+        const block = renderWorkflowContext({state, options, registry, delegatedSubagent});
         event.system.push({ type: "text", text: block });
 
         const isReadonly = !isWriteStage(state.stage, options.stageAccess) || state.status === "awaiting_approval";
@@ -155,6 +276,12 @@ export async function registerHooks(
             delete event.tools[toolName];
           }
         }
+        if (options.scopeToAgent && delegatedSubagent) {
+          const blocked = state.stage === "research" ? RESEARCH_SAVE_TOOLS : REVIEW_RECORD_TOOLS;
+          for (const toolName of blocked) {
+            delete event.tools[toolName];
+          }
+        }
       }),
     );
   }
@@ -165,13 +292,24 @@ export async function registerHooks(
 
       const state = await getWorkflowState(ctx.storage, event.sessionID);
       if (!state && options.autoStartOnAgentPrompt) {
+        let sessionInfo: { readonly parentID?: string; readonly agent?: string } | undefined;
+        try {
+          sessionInfo = await ctx.session.get({sessionID: event.sessionID});
+        } catch {
+          sessionInfo = undefined;
+        }
+
+        if (!shouldAutoStartOnPrompt({session: sessionInfo, options})) {
+          return;
+        }
+
         const pipeline = options.defaultPipeline;
-        const firstStage = "research";
+        const firstStage = getPipelineStages(pipeline, options.workflows)[0] ?? "research";
         const goal = event.prompt.text;
         const profiles = options.autoDetectProfiles
           ? detectProfiles({ promptText: goal, directory: ctx.location.directory, registry })
           : [];
-        const requireGate = needsGateConfirmation(firstStage, { approvedGates: [] }, options);
+        const startGate = resolveStartGate(firstStage, {approvedGates: []}, options);
 
         await saveWorkflowState(
           ctx.storage,
@@ -181,13 +319,13 @@ export async function registerHooks(
             stage: firstStage,
             goal,
             profiles,
-            status: requireGate ? "awaiting_approval" : "active",
-            ...(requireGate
+            status: startGate ? "awaiting_approval" : "active",
+            ...(startGate
               ? {
                   pendingGate: createPendingGate({
-                    gate: firstStage,
-                    targetStage: firstStage,
-                    summary: `User approval required before starting "${firstStage}" stage.`,
+                    gate: startGate.gate,
+                    targetStage: startGate.targetStage,
+                    summary: startGate.summary,
                   }),
                 }
               : {}),
@@ -204,7 +342,32 @@ export async function registerHooks(
 
   registrations.push(
     await ctx.tool.hook("execute.before", async (event) => {
-      const state = await getWorkflowState(ctx.storage, event.sessionID);
+      const subagentRole = getSubagentRoleForAgent(event.agent, options);
+      const resolved = await resolveWorkflowSessionID({
+        storage: ctx.storage,
+        session: ctx.session,
+        sessionID: event.sessionID,
+      });
+
+      if (subagentRole || resolved.isChild) {
+        const gateCheck = checkToolAllowedDuringGate(event.tool, resolved.state);
+        if (!gateCheck.allowed) {
+          throw new ToolError({message: gateCheck.reason});
+        }
+        if (FILE_MUTATION_TOOLS.has(event.tool)) {
+          throw new ToolError({
+            message: `Sub-agent "${event.agent}" is strictly read-only. File modification tool "${event.tool}" is blocked.`,
+          });
+        }
+        if (WORKFLOW_SET_TOOLS.has(event.tool)) {
+          throw new ToolError({
+            message: `Sub-agent "${event.agent}" cannot advance or modify workflow stages via "${event.tool}". Persist your artifact and let the parent agent manage transitions.`,
+          });
+        }
+        return;
+      }
+
+      const state = resolved.state;
       const gateCheck = checkToolAllowedDuringGate(event.tool, state);
       if (!gateCheck.allowed) {
         throw new ToolError({ message: gateCheck.reason });
@@ -213,6 +376,29 @@ export async function registerHooks(
       const stageCheck = checkToolAllowedForStage(event.tool, state, options);
       if (!stageCheck.allowed) {
         throw new ToolError({ message: stageCheck.reason });
+      }
+
+      if (
+        state &&
+        event.agent === options.agentId &&
+        (state.stage === "research" || state.stage === "review") &&
+        options.isolateStages.includes(state.stage) &&
+        (RESEARCH_SAVE_TOOLS.has(event.tool) || REVIEW_RECORD_TOOLS.has(event.tool))
+      ) {
+        const subagentAvailable = await isAgentRegistered(ctx, options.subagentIds[state.stage]);
+        const delegationCheck = checkToolAllowedForDelegation(
+          event.tool,
+          {
+            agent: event.agent,
+            stage: state.stage,
+            isChild: false,
+            subagentAvailable,
+          },
+          options,
+        );
+        if (!delegationCheck.allowed) {
+          throw new ToolError({message: delegationCheck.reason});
+        }
       }
     }),
   );
